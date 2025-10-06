@@ -1,0 +1,1554 @@
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from telebot.types import InputMediaPhoto, InputMediaVideo
+import time
+import requests
+from datetime import datetime, timedelta, date
+import hashlib
+from typing import Union, Optional, Callable, Dict, List, Tuple
+from functools import wraps
+import logging
+from logging.handlers import RotatingFileHandler
+import threading
+import json
+import os
+import sys
+import subprocess
+from collections import defaultdict
+import re
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+# Ротация логов в файл и дублирование в консоль
+if not logger.handlers:
+    file_handler = RotatingFileHandler(
+        filename='bot_log.log', maxBytes=2 * 1024 * 1024, backupCount=3, encoding='utf-8'
+    )
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+
+# Конфигурация
+BOT_TOKEN = "7670701578:AAGRibmqdvaa_WW3-jOSRYTuefLKQDRSzUc"
+ADMIN_IDS = [ ]
+CHANNEL_ID = 
+CHAT_ID = 
+SPAM_TIMEOUT = timedelta(hours=1)
+MAX_RETRIES = 100000
+RETRY_DELAY = 5
+STATS_FILE = "stats.json"
+
+# Константы для типов контента
+CONTENT_TYPES = ['photo', 'video', 'voice', 'sticker', 'animation', 'videonote']
+STATS_PERIODS = {
+    'today': (1, "за сегодня"),
+    'week': (7, "за последнюю неделю"),
+    'month': (30, "за последний месяц"),
+    'all': (None, "за всё время")
+}
+
+# Инициализация бота
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# Время запуска бота
+START_TIME = datetime.now()
+
+# Хранилища (оптимизированные с defaultdict)
+stores = {
+    'spam': {},
+    'admin': {},
+    'sent': {},
+    'sent_albums': {},  # {media_group_id: [(admin_id, [message_ids]), control_message_id]}
+    'albums_buffer': {},  # {media_group_id: {'items': [...], 'caption': str, 'user_id': int, 'timer': threading.Timer}}
+    'albums_data': {},  # {media_group_id: {'photos': [file_id,...], 'videos': [file_id,...], 'caption': str}}
+    'stats': {
+        'approved': defaultdict(int),  # {date: count}
+        'rejected': defaultdict(int),  # {date: count}
+        'deleted': defaultdict(int)    # {date: count}
+    },
+    'delete_requests': {},  # {user_id: {'link': str, 'description': str, 'message_id': int}}
+    'admin_delete_messages': {}  # {request_id: [(admin_id, message_id), ...]}
+}
+
+# Состояния FSM для удаления сообщений
+class DeleteStates:
+    WAITING_LINK = "waiting_link"
+    WAITING_DESCRIPTION = "waiting_description"
+
+class LinkValidator:
+    """Класс для валидации и обработки ссылок на сообщения"""
+    
+    @staticmethod
+    def is_valid_telegram_link(link: str) -> bool:
+        """Проверяет, является ли ссылка корректной ссылкой на сообщение Telegram"""
+        pattern = r'^https://t\.me/[a-zA-Z0-9_]+/\d+$'
+        return bool(re.match(pattern, link.strip()))
+    
+    @staticmethod
+    def extract_channel_and_message_id(link: str) -> tuple:
+        """Извлекает ID канала и ID сообщения из ссылки"""
+        pattern = r'https://t\.me/([a-zA-Z0-9_]+)/(\d+)'
+        match = re.match(pattern, link.strip())
+        if match:
+            channel_username = match.group(1)
+            message_id = int(match.group(2))
+            return channel_username, message_id
+        return None, None
+
+class MessageHandler:
+    """Класс для обработки сообщений и их хеширования"""
+    
+    @staticmethod
+    def get_content_hash(content: Union[str, telebot.types.Message], content_type: str) -> str:
+        """Создает уникальный хеш для контента различного типа"""
+        if not content:
+            return ''
+        if content_type == 'text':
+            return hashlib.md5(content.encode()).hexdigest()
+        elif content_type == 'photo':
+            return content[-1].file_id
+        elif content_type in ['animation', 'sticker', 'voice', 'video', 'videonote']:
+            return content.file_id
+        return ''
+
+    @staticmethod
+    def check_spam(content: Union[str, telebot.types.Message], content_type: str, 
+                  store: dict, key_prefix: str = '') -> bool:
+        """Проверка на спам с TTL-метками без полной чистки"""
+        try:
+            content_hash = MessageHandler.get_content_hash(content, content_type)
+            if not content_hash:
+                return True
+
+            now = datetime.now()
+            key = f"{key_prefix}:{content_type}:{content_hash}" if key_prefix else f"{content_type}:{content_hash}"
+
+            last_seen = store.get(key)
+            if isinstance(last_seen, datetime) and (now - last_seen) < SPAM_TIMEOUT:
+                return True
+
+            store[key] = now
+
+            # Ленивая очистка: иногда удаляем старые записи, не каждый раз
+            if len(store) > 5000:
+                cutoff = now - SPAM_TIMEOUT
+                stale_keys = [k for k, v in store.items() if isinstance(v, datetime) and v < cutoff]
+                for k in stale_keys:
+                    store.pop(k, None)
+
+            return False
+            
+        except Exception as e:
+            logger.error(f"Ошибка в check_spam: {e}")
+            return True  # В случае ошибки считаем спамом для безопасности
+
+def _finalize_album_and_send(media_group_id: str) -> None:
+    """Завершить сбор альбома и отправить администраторам на модерацию"""
+    try:
+        album_entry = stores['albums_buffer'].get(media_group_id)
+        if not album_entry:
+            return
+        items = album_entry.get('items', [])
+        caption = album_entry.get('caption') or ""
+        # Подготовка медиагруппы и данных для последующей публикации
+        photos: List[str] = []
+        videos: List[str] = []
+        media_group: List[Union[InputMediaPhoto, InputMediaVideo]] = []
+        for idx, part in enumerate(items):
+            if part['type'] == 'photo':
+                file_id = part['file_id']
+                photos.append(file_id)
+                if idx == 0:
+                    media_group.append(InputMediaPhoto(media=file_id, caption=caption, parse_mode="HTML"))
+                else:
+                    media_group.append(InputMediaPhoto(media=file_id))
+            elif part['type'] == 'video':
+                file_id = part['file_id']
+                videos.append(file_id)
+                if idx == 0:
+                    media_group.append(InputMediaVideo(media=file_id, caption=caption, parse_mode="HTML"))
+                else:
+                    media_group.append(InputMediaVideo(media=file_id))
+
+        # Нечего отправлять
+        if not media_group:
+            del stores['albums_buffer'][media_group_id]
+            return
+
+        # Сохраним данные альбома для последующих действий
+        stores['albums_data'][media_group_id] = {
+            'photos': photos,
+            'videos': videos,
+            'caption': caption
+        }
+
+        # Отправим медиагруппу каждому администратору
+        sent_map: List[Tuple[int, List[int]]] = []
+        control_messages: List[Tuple[int, int]] = []
+        for admin_id in ADMIN_IDS:
+            try:
+                sent_msgs = bot.send_media_group(admin_id, media=media_group)
+                msg_ids = [m.message_id for m in sent_msgs]
+                sent_map.append((admin_id, msg_ids))
+                # Отдельное сообщение-управление с кнопками
+                markup = InlineKeyboardMarkup()
+                markup.add(
+                    InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_album:{media_group_id}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_album:{media_group_id}")
+                )
+                markup.add(
+                    InlineKeyboardButton("📩 В чаты", callback_data=f"sendtochat_album:{media_group_id}")
+                )
+                ctrl = bot.send_message(admin_id, "анонимный фотки", reply_markup=markup)
+                control_messages.append((admin_id, ctrl.message_id))
+            except Exception as e:
+                logger.error(f"Ошибка при отправке альбома администратору {admin_id}: {e}")
+
+        stores['sent_albums'][media_group_id] = {
+            'media_messages': sent_map,
+            'control_messages': control_messages
+        }
+
+    finally:
+        # Очистим буфер
+        if media_group_id in stores['albums_buffer']:
+            try:
+                timer = stores['albums_buffer'][media_group_id].get('timer')
+                if timer:
+                    timer.cancel()
+            except Exception:
+                pass
+            del stores['albums_buffer'][media_group_id]
+
+def collect_album_part(message: telebot.types.Message) -> None:
+    """Собрать часть альбома в буфер по media_group_id и запланировать отправку"""
+    mgid = str(getattr(message, 'media_group_id', ''))
+    if not mgid:
+        return
+    # Инициализация записи
+    if mgid not in stores['albums_buffer']:
+        stores['albums_buffer'][mgid] = {
+            'items': [],
+            'caption': getattr(message, 'caption', None),
+            'user_id': message.from_user.id,
+            'timer': None
+        }
+    entry = stores['albums_buffer'][mgid]
+    # Обновим подпись, если появилась
+    if not entry.get('caption') and getattr(message, 'caption', None):
+        entry['caption'] = message.caption
+    # Добавим элемент
+    if getattr(message, 'photo', None):
+        entry['items'].append({'type': 'photo', 'file_id': message.photo[-1].file_id})
+    elif getattr(message, 'video', None):
+        entry['items'].append({'type': 'video', 'file_id': message.video.file_id})
+    else:
+        return
+    # Перезапустим короткий таймер финализации (для сбора всех частей)
+    if entry.get('timer'):
+        try:
+            entry['timer'].cancel()
+        except Exception:
+            pass
+    timer = threading.Timer(2.0, _finalize_album_and_send, args=[mgid])
+    entry['timer'] = timer
+    timer.start()
+
+class StatsManager:
+    """Класс для управления статистикой"""
+    
+    # Блокировка для потокобезопасного доступа к статистике
+    lock = threading.Lock()
+
+    @staticmethod
+    def get_today_date() -> str:
+        """Получить дату сегодняшнего дня в формате YYYY-MM-DD"""
+        return date.today().strftime('%Y-%m-%d')
+    
+    @staticmethod
+    def increment_approved():
+        """Увеличить счётчик одобренных сообщений"""
+        today = StatsManager.get_today_date()
+        with StatsManager.lock:
+            # Гарантируем наличие ключей
+            _ = stores['stats']['approved'][today]
+            stores['stats']['approved'][today] += 1
+            StatsManager.save_stats()  # Сохраняем сразу после изменения
+    
+    @staticmethod
+    def increment_rejected():
+        """Увеличить счётчик отклонённых сообщений"""
+        today = StatsManager.get_today_date()
+        with StatsManager.lock:
+            _ = stores['stats']['rejected'][today]
+            stores['stats']['rejected'][today] += 1
+            StatsManager.save_stats()  # Сохраняем сразу после изменения
+
+    @staticmethod
+    def increment_deleted():
+        """Увеличить счётчик удалённых сообщений"""
+        today = StatsManager.get_today_date()
+        with StatsManager.lock:
+            _ = stores['stats']['deleted'][today]
+            stores['stats']['deleted'][today] += 1
+            StatsManager.save_stats()  # Сохраняем сразу после изменения
+    
+    @staticmethod
+    def get_stats_for_period(days: int) -> tuple:
+        """Получить статистику за указанное количество дней"""
+        today = date.today()
+        approved_count = 0
+        rejected_count = 0
+        deleted_count = 0
+        
+        for i in range(days):
+            check_date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            approved_count += stores['stats']['approved'].get(check_date, 0)
+            rejected_count += stores['stats']['rejected'].get(check_date, 0)
+            deleted_count += stores['stats']['deleted'].get(check_date, 0)
+        
+        return approved_count, rejected_count, deleted_count
+    
+    @staticmethod
+    def get_all_time_stats() -> tuple:
+        """Получить общую статистику за всё время"""
+        approved_count = sum(stores['stats']['approved'].values())
+        rejected_count = sum(stores['stats']['rejected'].values())
+        deleted_count = sum(stores['stats']['deleted'].values())
+        return approved_count, rejected_count, deleted_count
+    
+    @staticmethod
+    def _cleanup_stats_by_days(days: int) -> None:
+        """Универсальный метод очистки статистики по количеству дней"""
+        today = date.today()
+        cutoff_date = today - timedelta(days=days)
+        
+        # Очистка категорий статистики
+        for category in ['approved', 'rejected', 'deleted']:
+            stores['stats'][category] = {
+                k: v for k, v in stores['stats'][category].items() 
+                if datetime.strptime(k, '%Y-%m-%d').date() >= cutoff_date
+            }
+    
+    @staticmethod
+    def cleanup_old_stats():
+        """Очистка старых записей статистики (старше 1 года)"""
+        StatsManager._cleanup_stats_by_days(365)
+    
+    @staticmethod
+    def cleanup_weekly_stats():
+        """Очистка недельной статистики (данные старше 7 дней)"""
+        StatsManager._cleanup_stats_by_days(7)
+    
+    @staticmethod
+    def cleanup_monthly_stats():
+        """Очистка месячной статистики (данные старше 30 дней)"""
+        StatsManager._cleanup_stats_by_days(30)
+    
+    @staticmethod
+    def cleanup_daily_stats():
+        """Очистка дневной статистики (данные старше 1 дня)"""
+        StatsManager._cleanup_stats_by_days(1)
+    
+    @staticmethod
+    def save_stats():
+        """Сохранить статистику в файл"""
+        try:
+            # Конвертируем defaultdict в обычный dict для JSON
+            stats_to_save = {
+                'approved': dict(stores['stats']['approved']),
+                'rejected': dict(stores['stats']['rejected']),
+                'deleted': dict(stores['stats']['deleted'])
+            }
+            # Атомарная запись: пишем во временный файл и заменяем
+            tmp_file = f"{STATS_FILE}.tmp"
+            with open(tmp_file, 'w', encoding='utf-8') as f:
+                json.dump(stats_to_save, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, STATS_FILE)
+            logger.info("Статистика сохранена в файл")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении статистики: {e}")
+    
+    @staticmethod
+    def load_stats():
+        """Загрузить статистику из файла"""
+        try:
+            if os.path.exists(STATS_FILE):
+                with open(STATS_FILE, 'r', encoding='utf-8') as f:
+                    loaded_stats = json.load(f)
+                    # Конвертируем обратно в defaultdict
+                    stores['stats']['approved'] = defaultdict(int, loaded_stats.get('approved', {}))
+                    stores['stats']['rejected'] = defaultdict(int, loaded_stats.get('rejected', {}))
+                    stores['stats']['deleted'] = defaultdict(int, loaded_stats.get('deleted', {}))
+                logger.info("Статистика загружена из файла")
+            else:
+                logger.info("Файл статистики не найден, создаём новый")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке статистики: {e}")
+    
+    @staticmethod
+    def auto_save_stats():
+        """Автоматическое сохранение статистики каждые 5 минут"""
+        AUTO_SAVE_INTERVAL = 300  # 5 минут
+        ERROR_RETRY_INTERVAL = 60  # 1 минута при ошибке
+        
+        while True:
+            try:
+                time.sleep(AUTO_SAVE_INTERVAL)
+                StatsManager.save_stats()
+            except Exception as e:
+                logger.error(f"Ошибка в автосохранении статистики: {e}")
+                time.sleep(ERROR_RETRY_INTERVAL)
+
+def retry_operation(func: Callable) -> Callable:
+    """Декоратор для повторных попыток выполнения операции"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"Попытка {attempt + 1}/{MAX_RETRIES} не удалась: {e}")
+                    time.sleep(RETRY_DELAY)
+        logger.error(f"Все попытки исчерпаны. Последняя ошибка: {last_error}")
+        raise last_error
+    return wrapper
+
+@retry_operation
+def send_message_safe(chat_id: int, content_type: str, content: Union[str, telebot.types.Message], 
+                     caption: Optional[str] = None, parse_mode: Optional[str] = None) -> None:
+    """Безопасная отправка сообщений с поддержкой разных типов"""
+    try:
+        if content_type == 'text':
+            bot.send_message(chat_id, content, parse_mode=parse_mode)
+        else:
+            send_func = getattr(bot, f'send_{content_type}')
+            send_func(chat_id, content, caption=caption, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Ошибка при отправке {content_type}: {e}")
+        raise
+
+def create_markup(message_id: int, content_type: str) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для модерации сообщения"""
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{content_type}:{message_id}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"reject:{message_id}"),
+        InlineKeyboardButton("📩 В чат", callback_data=f"sendtochat_{content_type}:{message_id}")
+    )
+    return markup
+
+def send_text_safe(chat_id: int, text: str, parse_mode: Optional[str] = None, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
+    """Отправка текста с перехватом 403 (bot was blocked) и других ошибок"""
+    try:
+        bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        err_text = str(e)
+        if "bot was blocked by the user" in err_text or "Forbidden: bot was blocked" in err_text:
+            logger.info("Пользователь заблокировал бота, пропускаем отправку сообщения")
+            return
+        logger.error(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+
+def send_media(chat_id: int, content_type: str, content, caption: str = "", to_chat: bool = False) -> None:
+    """Единая функция отправки текста и медиа в канал или чат"""
+    if content_type == 'text':
+        bot.send_message(chat_id, content, parse_mode="HTML")
+        return
+    if content_type == 'photo' and getattr(content[-1], 'file_id', None):
+        bot.send_photo(chat_id, content[-1].file_id, caption=caption, parse_mode="HTML")
+        return
+    if hasattr(content, 'file_id'):
+        send_func = getattr(bot, f'send_{content_type}', None)
+        if send_func:
+            kwargs = {}
+            if content_type in ['video', 'animation']:
+                kwargs = {'caption': caption, 'parse_mode': "HTML"}
+            elif content_type == 'voice':
+                kwargs = {'caption': caption} if caption else {}
+            send_func(chat_id, content.file_id, **kwargs)
+
+def send_delete_request_to_admins(user_id: int, link: str, description: str) -> None:
+    """Отправить запрос на удаление администраторам"""
+    # Создаем уникальный анонимный ID для запроса
+    anonymous_id = hashlib.md5(f"{user_id}_{int(time.time())}".encode()).hexdigest()[:8]
+    request_id = f"delete_{anonymous_id}_{int(time.time())}"
+    
+    # Формируем текст запроса
+    request_text = f"*Запрос на удаление сообщения:*\n"
+    request_text += f"*Описание:* {description if description else 'Описание отсутствует'}\n"
+    request_text += f"*Ссылка:* {link}"
+    
+    # Создаем клавиатуру
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Принять запрос", callback_data=f"approve_delete:{request_id}"),
+        InlineKeyboardButton("❌ Отклонить запрос", callback_data=f"reject_delete:{request_id}")
+    )
+    
+    # Сохраняем данные запроса
+    stores['delete_requests'][request_id] = {
+        'user_id': user_id,
+        'link': link,
+        'description': description,
+        'admin_messages': []  # Список для хранения сообщений у администраторов
+    }
+    
+    # Отправляем всем администраторам и сохраняем ID сообщений
+    for admin_id in ADMIN_IDS:
+        try:
+            sent_message = bot.send_message(admin_id, request_text, reply_markup=markup, parse_mode="Markdown")
+            stores['delete_requests'][request_id]['admin_messages'].append((admin_id, sent_message.message_id))
+        except Exception as e:
+            logger.error(f"Ошибка при отправке запроса на удаление администратору {admin_id}: {e}")
+
+def delete_message_from_channel(link: str) -> bool:
+    """Удалить сообщение из канала по ссылке"""
+    try:
+        channel_username, message_id = LinkValidator.extract_channel_and_message_id(link)
+        if not channel_username or not message_id:
+            logger.error("Не удалось извлечь данные из ссылки")
+            return False
+        
+        # Получаем информацию о канале для проверки
+        try:
+            channel_info = bot.get_chat(CHANNEL_ID)
+            channel_username_from_id = channel_info.username
+            
+            # Проверяем, что это наш канал (сравниваем username или ID)
+            if channel_username != channel_username_from_id and channel_username != str(CHANNEL_ID):
+                logger.warning("Попытка удалить сообщение из чужого канала")
+                return False
+        except Exception as e:
+            logger.warning(f"Не удалось проверить канал: {e}")
+            # Если не можем проверить, разрешаем удаление (на свой страх и риск)
+        
+        # Проверяем права бота на удаление сообщений
+        try:
+            bot_member = bot.get_chat_member(CHANNEL_ID, bot.get_me().id)
+            if not bot_member.can_delete_messages:
+                logger.error("У бота нет прав на удаление сообщений")
+                return False
+        except Exception as e:
+            logger.warning(f"Не удалось проверить права бота: {e}")
+        
+        # Пытаемся удалить сообщение
+        try:
+            bot.delete_message(CHANNEL_ID, message_id)
+            logger.info("Сообщение удалено из канала")
+            return True
+        except Exception as delete_error:
+            # Если не удалось удалить по ID из ссылки, пробуем найти сообщение по содержимому
+            logger.warning(f"Не удалось удалить сообщение по ID: {delete_error}")
+            
+            # Пробуем найти сообщение в последних сообщениях канала
+            try:
+                # Получаем последние сообщения из канала
+                messages = bot.get_chat_history(CHANNEL_ID, limit=100)
+                
+                for msg in messages:
+                    # Проверяем, есть ли в сообщении ссылка на него
+                    if hasattr(msg, 'text') and msg.text and link in msg.text:
+                        bot.delete_message(CHANNEL_ID, msg.message_id)
+                        logger.info("Сообщение удалено по содержимому")
+                        return True
+                    elif hasattr(msg, 'caption') and msg.caption and link in msg.caption:
+                        bot.delete_message(CHANNEL_ID, msg.message_id)
+                        logger.info("Сообщение удалено по содержимому")
+                        return True
+                
+                logger.error("Сообщение не найдено в канале")
+                return False
+                
+            except Exception as search_error:
+                logger.error(f"Ошибка при поиске сообщения: {search_error}")
+                return False
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка при удалении сообщения: {e}")
+        return False
+
+def cleanup_bot_messages(user_id: int, chat_id: int) -> None:
+    """Удалить все сообщения бота для пользователя"""
+    if user_id in stores['delete_requests']:
+        user_data = stores['delete_requests'][user_id]
+        bot_messages = user_data.get('bot_messages', [])
+        
+        for message_id in bot_messages:
+            try:
+                bot.delete_message(chat_id, message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение бота: {e}")
+        
+        # Очищаем список сообщений
+        user_data['bot_messages'] = []
+
+def cleanup_user_data(user_id: int) -> None:
+    """Очистить данные пользователя"""
+    if user_id in stores['delete_requests']:
+        del stores['delete_requests'][user_id]
+
+def delete_admin_messages(request_id: str) -> None:
+    """Удалить сообщения с запросом у всех администраторов"""
+    if request_id in stores['delete_requests']:
+        request_data = stores['delete_requests'][request_id]
+        admin_messages = request_data.get('admin_messages', [])
+        
+        for admin_id, message_id in admin_messages:
+            try:
+                bot.delete_message(admin_id, message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение у администратора: {e}")
+        
+        # Очищаем список сообщений
+        request_data['admin_messages'] = []
+
+def delete_message_by_forward(link: str) -> bool:
+    """Альтернативный метод удаления через пересылку сообщения"""
+    try:
+        # Пытаемся получить сообщение по ссылке
+        try:
+            # Используем метод get_chat для получения информации о канале
+            channel_username, message_id = LinkValidator.extract_channel_and_message_id(link)
+            
+            if not channel_username or not message_id:
+                return False
+            
+            # Пробуем получить сообщение напрямую
+            try:
+                # Создаем ссылку на сообщение
+                message_link = f"https://t.me/{channel_username}/{message_id}"
+                
+                # Пытаемся удалить сообщение
+                bot.delete_message(CHANNEL_ID, message_id)
+                logger.info("Сообщение удалено из канала")
+                return True
+                
+            except Exception as direct_error:
+                logger.warning(f"Прямое удаление не удалось: {direct_error}")
+                
+                # Пробуем найти сообщение по времени создания
+                try:
+                    # Получаем историю сообщений
+                    messages = bot.get_chat_history(CHANNEL_ID, limit=200)
+                    
+                    # Ищем сообщение по ID или по содержимому
+                    for msg in messages:
+                        if msg.message_id == message_id:
+                            bot.delete_message(CHANNEL_ID, msg.message_id)
+                            logger.info("Сообщение найдено и удалено")
+                            return True
+                    
+                    logger.error("Сообщение не найдено в истории канала")
+                    return False
+                    
+                except Exception as history_error:
+                    logger.error(f"Ошибка при поиске в истории: {history_error}")
+                    return False
+                    
+        except Exception as link_error:
+            logger.error(f"Ошибка при обработке ссылки: {link_error}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Критическая ошибка в альтернативном методе: {e}")
+        return False
+
+def send_to_admin(content, content_type: str, message_id: int, caption: str = "") -> None:
+    """Отправить контент администраторам для модерации"""
+    markup = create_markup(message_id, content_type)
+    sent_messages_store = stores['sent']
+    sent_messages_store[message_id] = []  # Создаем список для хранения сообщений админов
+
+    # Специальные заголовки для разных типов контента
+    special_captions = {
+        'voice': "Анонимное голосовое сообщение:",
+        'animation': "Анонимная гифка:"
+    }
+    
+    final_caption = special_captions.get(content_type, caption)
+
+    for admin_id in ADMIN_IDS:
+        try:
+            sent_message = None
+            if content_type == 'text':
+                sent_message = bot.send_message(admin_id, content, reply_markup=markup)
+            elif content_type in CONTENT_TYPES and content:
+                # Используем универсальную функцию для медиа-контента
+                if content_type == 'photo' and content[-1].file_id:
+                    sent_message = bot.send_photo(admin_id, content[-1].file_id, 
+                                               caption=final_caption, reply_markup=markup)
+                elif hasattr(content, 'file_id') and content.file_id:
+                    send_func = getattr(bot, f'send_{content_type}')
+                    if content_type in ['voice', 'animation']:
+                        sent_message = send_func(admin_id, content.file_id, 
+                                               caption=final_caption, reply_markup=markup)
+                    else:
+                        sent_message = send_func(admin_id, content.file_id, 
+                                               caption=final_caption, reply_markup=markup)
+
+            # Сохраняем данные о сообщении
+            if sent_message:
+                sent_messages_store[message_id].append((admin_id, sent_message.message_id))
+
+        except Exception as e:
+            logger.error(f"Ошибка при отправке сообщения администратору {admin_id}: {e}")
+
+def handle_content(message: telebot.types.Message, content_type: str) -> None:
+    """Универсальный обработчик контента"""
+    # Если это часть альбома — собираем по media_group_id и не отправляем по одному
+    if getattr(message, 'media_group_id', None) and content_type in ['photo', 'video']:
+        collect_album_part(message)
+        return
+    content = getattr(message, content_type, None)
+    if content and not MessageHandler.check_spam(content, content_type, stores['spam'], str(message.from_user.id)):
+        caption = getattr(message, 'caption', None)
+        send_to_admin(content, content_type, message.message_id, caption or "")
+
+# Регистрация обработчиков
+# Удалён дублирующий обработчик /start
+
+@bot.message_handler(commands=['delete_msg'])
+def start_delete_process(message):
+    """Начать процесс удаления сообщения"""
+    user_id = message.from_user.id
+    
+    # Инициализируем данные пользователя
+    stores['delete_requests'][user_id] = {
+        'link': '',
+        'description': '',
+        'message_id': message.message_id,
+        'bot_messages': [],  # Список для хранения ID сообщений бота
+        'start_time': datetime.now()  # Время начала процесса
+    }
+    
+    # Отправляем сообщение и сохраняем его ID
+    sent_message = bot.reply_to(message, "Отправьте ссылку на сообщение, которое хотите удалить.")
+    stores['delete_requests'][user_id]['bot_messages'].append(sent_message.message_id)
+    
+    # Устанавливаем состояние ожидания ссылки
+    stores['delete_requests'][user_id]['state'] = DeleteStates.WAITING_LINK
+    
+    # Удаляем исходную команду
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except Exception as e:
+        logger.debug(f"Не удалось удалить команду /delete_msg: {e}")
+
+ 
+
+## Команда /leave удалена
+
+@bot.message_handler(commands=['check_rights'])
+def check_bot_rights(message):
+    """Проверить права бота в канале"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Получаем информацию о боте в канале
+        bot_member = bot.get_chat_member(CHANNEL_ID, bot.get_me().id)
+        
+        rights_info = f"🔐 <b>Права бота в канале:</b>\n\n"
+        rights_info += f"• Удаление сообщений: {'✅' if bot_member.can_delete_messages else '❌'}\n"
+        rights_info += f"• Редактирование сообщений: {'✅' if bot_member.can_edit_messages else '❌'}\n"
+        rights_info += f"• Приглашение пользователей: {'✅' if bot_member.can_invite_users else '❌'}\n"
+        rights_info += f"• Ограничение пользователей: {'✅' if bot_member.can_restrict_members else '❌'}\n"
+        rights_info += f"• Закрепление сообщений: {'✅' if bot_member.can_pin_messages else '❌'}\n"
+        rights_info += f"• Публикация сообщений: {'✅' if bot_member.can_post_messages else '❌'}\n"
+        
+        if not bot_member.can_delete_messages:
+            rights_info += f"\n⚠️ <b>Внимание:</b> У бота нет прав на удаление сообщений! Это необходимо для работы команды /delete_msg."
+        
+        # Кнопка закрытия
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="check_rights_close"))
+        bot.send_message(message.chat.id, rights_info, parse_mode="HTML", reply_markup=markup)
+        # Удаляем исходную команду
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            logger.debug(f"Не удалось удалить команду /check_rights: {e}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке прав бота: {e}")
+        bot.reply_to(message, f"Ошибка при проверке прав: {e}")
+
+
+@bot.message_handler(commands=['restart'])
+def restart_bot(message):
+    """Перезапустить бота через bot2.py (только для администраторов)"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Уведомляем о начале перезапуска
+        bot.reply_to(message, "🔄 <b>Инициирован перезапуск бота...</b>\n\nЗапуск системы перезапуска...", parse_mode="HTML")
+        
+        # Сохраняем все данные перед перезапуском
+        StatsManager.save_stats()
+        logger.info("Данные сохранены перед перезапуском")
+        
+        # Путь к bot2.py
+        bot2_path = os.path.join(os.path.dirname(__file__), "bot2.py")
+        
+        if not os.path.exists(bot2_path):
+            bot.reply_to(message, "❌ <b>Ошибка:</b> Файл bot2.py не найден!", parse_mode="HTML")
+            return
+        
+        # Запускаем bot2.py
+        try:
+            if os.name == 'nt':  # Windows
+                subprocess.Popen([sys.executable, bot2_path], 
+                               creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:  # Linux/Mac
+                subprocess.Popen([sys.executable, bot2_path], 
+                               stdout=subprocess.DEVNULL, 
+                               stderr=subprocess.DEVNULL)
+            
+            logger.info("Запущен bot2.py для перезапуска")
+            bot.reply_to(message, "✅ <b>Система перезапуска запущена</b>\n\nОжидайте сообщения о статусе...", parse_mode="HTML")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при запуске bot2.py: {e}")
+            bot.reply_to(message, f"❌ <b>Ошибка при запуске системы перезапуска:</b> {e}", parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при инициировании перезапуска: {e}")
+        bot.reply_to(message, f"❌ <b>Ошибка при перезапуске:</b> {e}", parse_mode="HTML")
+
+@bot.message_handler(commands=['stop'])
+def stop_bot(message):
+    """Остановить бота (только для администраторов)"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Уведомляем об остановке
+        bot.reply_to(message, "🛑 <b>Остановка бота...</b>\n\nСохранение данных...", parse_mode="HTML")
+        
+        # Сохраняем все данные перед остановкой
+        StatsManager.save_stats()
+        logger.info("Данные сохранены перед остановкой")
+        
+        # Уведомляем о завершении сохранения
+        bot.reply_to(message, "✅ <b>Данные сохранены</b>\n\nБот остановлен.", parse_mode="HTML")
+        
+        # Ждем 2 секунды для завершения отправки сообщений
+        time.sleep(2)
+        
+        # Завершаем текущий процесс
+        logger.info("Инициирована остановка бота администратором")
+        os._exit(0)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при остановке бота: {e}")
+        bot.reply_to(message, f"Ошибка при остановке: {e}")
+
+@bot.message_handler(commands=['status'])
+def bot_status(message):
+    """Показать статус бота (доступно всем)"""
+    
+    try:
+        # Получаем информацию о боте
+        bot_info = bot.get_me()
+        
+        # Подсчитываем активные запросы
+        active_requests = len(stores['delete_requests'])
+        
+        # Получаем статистику
+        approved, rejected, deleted = StatsManager.get_all_time_stats()
+        total = approved + rejected
+        
+        status_text = f"🤖 <b>Статус бота</b>\n\n"
+        status_text += f"• <b>Имя:</b> {bot_info.first_name}\n"
+        status_text += f"• <b>Username:</b> @{bot_info.username}\n"
+        status_text += f"• <b>ID:</b> {bot_info.id}\n\n"
+        status_text += f"📊 <b>Статистика:</b>\n"
+        status_text += f"• Активных запросов: {active_requests}\n"
+        status_text += f"• Одобрено: {approved}\n"
+        status_text += f"• Отклонено: {rejected}\n"
+        status_text += f"• Удалено: {deleted}\n"
+        status_text += f"• Всего: {total}\n\n"
+        # Время запуска и аптайм
+        started_at = START_TIME
+        uptime_delta = datetime.now() - started_at
+        days = uptime_delta.days
+        hours, remainder = divmod(uptime_delta.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        status_text += f"🕒 <b>Работает с:</b> {started_at.strftime('%d.%m.%Y %H:%M:%S')}\n"
+        status_text += f"⏳ <b>Время работы:</b> {days} д. {hours} ч. {minutes} мин."
+        
+        # Кнопка закрытия под сообщением статуса
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="status_close"))
+        
+        bot.send_message(message.chat.id, status_text, parse_mode="HTML", reply_markup=markup)
+        # Удаляем исходную команду
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            logger.debug(f"Не удалось удалить команду /status: {e}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статуса бота: {e}")
+        bot.reply_to(message, f"Ошибка при получении статуса: {e}")
+
+@bot.message_handler(commands=['help_admin'])
+def admin_help(message):
+    """Показать список команд для администраторов"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+    
+    help_text = f"🔧 <b>Команды администратора</b>\n\n"
+    help_text += f"<b>Основные команды:</b>\n"
+    help_text += f"• /start - Запуск бота\n"
+    help_text += f"• /help_admin - Показать это меню\n\n"
+    help_text += f"<b>Статистика и мониторинг:</b>\n"
+    help_text += f"• /stats - Статистика модерации\n"
+    help_text += f"• /status - Статус бота\n"
+    help_text += f"• /check_rights - Проверить права бота\n\n"
+    help_text += f"<b>Управление ботом:</b>\n"
+    help_text += f"• /restart - Перезапустить бота\n"
+    help_text += f"• /stop - Остановить бота\n\n"
+    help_text += f"<b>Для пользователей:</b>\n"
+    help_text += f"• /delete_msg - Запрос на удаление сообщения"
+    
+    help_markup = InlineKeyboardMarkup()
+    help_markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="admin_menu_close"))
+    sent = bot.send_message(message.chat.id, help_text, parse_mode="HTML", reply_markup=help_markup)
+    # Удаляем исходную команду
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except Exception as e:
+        logger.debug(f"Не удалось удалить команду /help_admin: {e}")
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    try:
+        bot.send_message(message.chat.id, "Бот запущен. Используйте /help_admin или /stats.", parse_mode="HTML")
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            logger.debug(f"Не удалось удалить команду /start: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении команды /start: {e}")
+
+@bot.message_handler(commands=['stats'])
+def show_stats_menu(message):
+    """Инлайн-меню статистики (доступно всем)"""
+    try:
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("📊 За сегодня", callback_data="stats_today"),
+            InlineKeyboardButton("📈 За неделю", callback_data="stats_week")
+        )
+        markup.add(
+            InlineKeyboardButton("📅 За месяц", callback_data="stats_month"),
+            InlineKeyboardButton("🕐 За всё время", callback_data="stats_all")
+        )
+        markup.add(
+            InlineKeyboardButton("❌ Закрыть", callback_data="stats_close")
+        )
+
+        bot.send_message(message.chat.id, "Выберите период статистики:", reply_markup=markup)
+        # Удаляем исходную команду
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            logger.debug(f"Не удалось удалить команду /stats: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при открытии меню статистики: {e}")
+        bot.reply_to(message, "Не удалось открыть меню статистики")
+
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    user_id = message.from_user.id
+    
+    # Проверяем, находится ли пользователь в процессе удаления сообщения
+    if user_id in stores['delete_requests']:
+        user_data = stores['delete_requests'][user_id]
+        current_state = user_data.get('state')
+        
+        if current_state == DeleteStates.WAITING_LINK:
+            # Обрабатываем ссылку
+            if LinkValidator.is_valid_telegram_link(message.text):
+                user_data['link'] = message.text
+                user_data['state'] = DeleteStates.WAITING_DESCRIPTION
+                
+                # Удаляем предыдущие сообщения бота
+                cleanup_bot_messages(user_id, message.chat.id)
+                
+                # Создаем клавиатуру для выбора добавления описания
+                markup = InlineKeyboardMarkup()
+                markup.add(
+                    InlineKeyboardButton("Добавить описание", callback_data="add_description"),
+                    InlineKeyboardButton("Пропустить этап", callback_data="skip_description")
+                )
+                
+                sent_message = bot.reply_to(message, "Хотите добавить описание?", reply_markup=markup)
+                user_data['bot_messages'].append(sent_message.message_id)
+            else:
+                # Удаляем предыдущие сообщения бота
+                cleanup_bot_messages(user_id, message.chat.id)
+                
+                sent_message = bot.reply_to(message, "Неверная ссылка. Отправьте корректную ссылку на сообщение.")
+                user_data['bot_messages'].append(sent_message.message_id)
+        
+        elif current_state == DeleteStates.WAITING_DESCRIPTION:
+            # Обрабатываем описание
+            user_data['description'] = message.text
+            user_data['state'] = None  # Завершаем FSM
+            
+            # Удаляем предыдущие сообщения бота
+            cleanup_bot_messages(user_id, message.chat.id)
+            
+            # Отправляем запрос администраторам
+            send_delete_request_to_admins(user_id, user_data['link'], user_data['description'])
+            
+            # Уведомляем пользователя
+            sent_message = bot.reply_to(message, "Запрос на удаление отправлен.")
+            user_data['bot_messages'].append(sent_message.message_id)
+            
+            # Очищаем данные пользователя через 5 секунд
+            threading.Timer(5.0, cleanup_user_data, args=[user_id]).start()
+        
+        return
+    
+    # Обычная обработка текста (если не в процессе удаления)
+    if not MessageHandler.check_spam(message.text, 'text', stores['spam'], str(message.from_user.id)):
+        send_to_admin(message.text, 'text', message.message_id)
+
+# Динамическая регистрация обработчиков для разных типов контента
+for content_type in CONTENT_TYPES:
+    bot.message_handler(content_types=[content_type])(
+        lambda message, ct=content_type: handle_content(message, ct)
+    )
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    try:
+        # Альбомы: approve/reject/sendtochat
+        if call.data.startswith("approve_album:") or call.data.startswith("reject_album:") or call.data.startswith("sendtochat_album:"):
+            if call.from_user.id not in ADMIN_IDS:
+                bot.answer_callback_query(call.id, "У вас нет прав для выполнения этой операции.")
+                return
+            action, album_id = call.data.split(":", 1)
+            album = stores['albums_data'].get(album_id)
+            sent_info = stores['sent_albums'].get(album_id)
+            if not album or not sent_info:
+                bot.answer_callback_query(call.id, "Альбом не найден или уже обработан.")
+                return
+            caption = album.get('caption') or ""
+            if action == "approve_album":
+                # Отправляем в канал как медиагруппу
+                media: List[Union[InputMediaPhoto, InputMediaVideo]] = []
+                first = True
+                for fid in album.get('photos', []):
+                    if first:
+                        media.append(InputMediaPhoto(media=fid, caption=caption, parse_mode="HTML"))
+                        first = False
+                    else:
+                        media.append(InputMediaPhoto(media=fid))
+                for fid in album.get('videos', []):
+                    if first:
+                        media.append(InputMediaVideo(media=fid, caption=caption, parse_mode="HTML"))
+                        first = False
+                    else:
+                        media.append(InputMediaVideo(media=fid))
+                try:
+                    bot.send_media_group(CHANNEL_ID, media)
+                    StatsManager.increment_approved()
+                    bot.answer_callback_query(call.id, "Альбом одобрен и отправлен в канал.")
+                except Exception as e:
+                    logger.error(f"Ошибка при публикации альбома в канал: {e}")
+                    bot.answer_callback_query(call.id, "Ошибка при публикации альбома.")
+            elif action == "sendtochat_album":
+                # Отправляем в чат как медиагруппу
+                media: List[Union[InputMediaPhoto, InputMediaVideo]] = []
+                first = True
+                for fid in album.get('photos', []):
+                    if first:
+                        media.append(InputMediaPhoto(media=fid, caption=caption, parse_mode="HTML"))
+                        first = False
+                    else:
+                        media.append(InputMediaPhoto(media=fid))
+                for fid in album.get('videos', []):
+                    if first:
+                        media.append(InputMediaVideo(media=fid, caption=caption, parse_mode="HTML"))
+                        first = False
+                    else:
+                        media.append(InputMediaVideo(media=fid))
+                try:
+                    bot.send_media_group(CHAT_ID, media)
+                    StatsManager.increment_approved()
+                    bot.answer_callback_query(call.id, "Альбом отправлен в чат.")
+                except Exception as e:
+                    logger.error(f"Ошибка при отправке альбома в чат: {e}")
+                    bot.answer_callback_query(call.id, "Ошибка при отправке альбома.")
+            else:  # reject_album
+                StatsManager.increment_rejected()
+                bot.answer_callback_query(call.id, "Альбом отклонён.")
+
+            # Удаление сообщений у администраторов
+            try:
+                for admin_id, ids in sent_info.get('media_messages', []):
+                    for mid in ids:
+                        try:
+                            bot.delete_message(admin_id, mid)
+                        except Exception:
+                            pass
+                for admin_id, ctrl_id in sent_info.get('control_messages', []):
+                    try:
+                        bot.delete_message(admin_id, ctrl_id)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщения альбома у админов: {e}")
+            # Очистка структур
+            if album_id in stores['sent_albums']:
+                del stores['sent_albums'][album_id]
+            if album_id in stores['albums_data']:
+                del stores['albums_data'][album_id]
+            return
+        # Обработка кнопок добавления/пропуска описания
+        if call.data in ["add_description", "skip_description"]:
+            user_id = call.from_user.id
+            if user_id in stores['delete_requests']:
+                user_data = stores['delete_requests'][user_id]
+                
+                if call.data == "add_description":
+                    user_data['state'] = DeleteStates.WAITING_DESCRIPTION
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text="Отправьте описание для запроса на удаление:"
+                    )
+                else:  # skip_description
+                    user_data['description'] = "Описание отсутствует"
+                    user_data['state'] = None
+                    
+                    # Удаляем предыдущие сообщения бота
+                    cleanup_bot_messages(user_id, call.message.chat.id)
+                    
+                    # Отправляем запрос администраторам
+                    send_delete_request_to_admins(user_id, user_data['link'], user_data['description'])
+                    
+                    # Уведомляем пользователя
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text="Запрос на удаление отправлен."
+                    )
+                    
+                    # Очищаем данные пользователя через 5 секунд
+                    threading.Timer(5.0, cleanup_user_data, args=[user_id]).start()
+            
+            bot.answer_callback_query(call.id)
+            return
+        
+        # Обработка запросов на удаление
+        if call.data.startswith("approve_delete:") or call.data.startswith("reject_delete:"):
+            if call.from_user.id not in ADMIN_IDS:
+                bot.answer_callback_query(call.id, "У вас нет прав для выполнения этой операции.")
+                return
+            
+            action, request_id = call.data.split(":", 1)
+            
+            if request_id not in stores['delete_requests']:
+                bot.answer_callback_query(call.id, "Запрос не найден или уже обработан.")
+                return
+            
+            request_data = stores['delete_requests'][request_id]
+            user_id = request_data['user_id']
+            link = request_data['link']
+            
+            if action == "approve_delete":
+                # Пытаемся удалить сообщение
+                success = False
+                
+                # Сначала пробуем основной метод
+                if delete_message_from_channel(link):
+                    success = True
+                else:
+                    # Если основной метод не сработал, пробуем альтернативный
+                    logger.info("Пробуем альтернативный метод удаления")
+                    if delete_message_by_forward(link):
+                        success = True
+                
+                if success:
+                    # Инкрементируем счётчик удалённых при успешном удалении
+                    StatsManager.increment_deleted()
+                    send_text_safe(user_id, "Ваш запрос был одобрен. Сообщение удалено.")
+                    bot.answer_callback_query(call.id, "Запрос одобрен, сообщение удалено.")
+                else:
+                    send_text_safe(user_id, "Произошла ошибка при удалении сообщения. Возможно, сообщение уже удалено или у бота нет прав на удаление. Обратитесь к администратору.")
+                    bot.answer_callback_query(call.id, "Ошибка при удалении сообщения.")
+            else:  # reject_delete
+                send_text_safe(user_id, "Ваш запрос на удаление сообщения был отклонен.")
+                bot.answer_callback_query(call.id, "Запрос отклонен.")
+                # Сохраняем факт обработки события
+                StatsManager.save_stats()
+            
+            # Удаляем сообщения у всех администраторов
+            delete_admin_messages(request_id)
+            
+            # Удаляем запрос из хранилища
+            del stores['delete_requests'][request_id]
+            
+            return
+        
+        # Обработка закрытия статуса
+        if call.data == "status_close":
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                bot.answer_callback_query(call.id, "Статус закрыт")
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии статуса: {e}")
+                bot.answer_callback_query(call.id, "Ошибка при закрытии")
+            return
+
+        # Закрытие окна check_rights
+        if call.data == "check_rights_close":
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                bot.answer_callback_query(call.id, "Окно закрыто")
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии окна прав: {e}")
+                bot.answer_callback_query(call.id, "Ошибка при закрытии")
+            return
+        
+        # Закрытие админ-меню
+        if call.data == "admin_menu_close":
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                bot.answer_callback_query(call.id, "Меню закрыто")
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии админ-меню: {e}")
+                bot.answer_callback_query(call.id, "Ошибка при закрытии")
+            return
+        
+        # Обработка статистики (общедоступно)
+        if call.data.startswith("stats_"):
+            
+            # Обработка кнопки "Закрыть"
+            if call.data == "stats_close":
+                try:
+                    # Удаляем сообщение со статистикой
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
+                    bot.answer_callback_query(call.id, "Статистика закрыта")
+                except Exception as e:
+                    logger.error(f"Ошибка при закрытии статистики: {e}")
+                    bot.answer_callback_query(call.id, "Ошибка при закрытии")
+                return
+            
+            period = call.data.split("_")[1]
+            days, period_text = STATS_PERIODS[period]
+            
+            if days is None:  # "all" period
+                approved, rejected, deleted = StatsManager.get_all_time_stats()
+            else:
+                approved, rejected, deleted = StatsManager.get_stats_for_period(days)
+            
+            total = approved + rejected
+            approved_percent = (approved / total * 100) if total > 0 else 0
+            rejected_percent = (rejected / total * 100) if total > 0 else 0
+            
+            stats_text = f"📊 <b>Статистика модерации {period_text}</b>\n\n"
+            stats_text += f"✅ <b>Одобрено:</b> {approved} ({approved_percent:.1f}%)\n"
+            stats_text += f"❌ <b>Отклонено:</b> {rejected} ({rejected_percent:.1f}%)\n"
+            stats_text += f"🗑️ <b>Удалено:</b> {deleted}\n"
+            stats_text += f"📈 <b>Всего:</b> {total}"
+            
+            # Создаём новую клавиатуру с кнопкой "Закрыть"
+            markup = InlineKeyboardMarkup()
+            markup.add(
+                InlineKeyboardButton("📊 За сегодня", callback_data="stats_today"),
+                InlineKeyboardButton("📈 За неделю", callback_data="stats_week")
+            )
+            markup.add(
+                InlineKeyboardButton("📅 За месяц", callback_data="stats_month"),
+                InlineKeyboardButton("🕐 За всё время", callback_data="stats_all")
+            )
+            markup.add(
+                InlineKeyboardButton("❌ Закрыть", callback_data="stats_close")
+            )
+            
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=stats_text,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+            bot.answer_callback_query(call.id, f"Статистика {period_text} обновлена")
+            return
+        
+        # Обработка модерации сообщений
+        data = call.data.split(":")
+        action, message_id = data[0], int(data[1])
+
+        if action.startswith("approve"):
+            content_type = action.split('_')[1]
+            content = call.message
+            caption = content.caption if content.caption else "Нет описания"
+            
+            # Отправляем в канал с соответствующим заголовком
+            channel_captions = {
+                'text': f"<b>Анонимное сообщение с текстом:</b>\n\n{content.text}",
+                'photo': f"<b>Анонимное фото:</b>\n\n{caption}",
+                'video': f"<b>Анонимное видео:</b>\n\n{caption}",
+                'voice': "Анонимное голосовое сообщение:",
+                'animation': "Анонимная гифка:"
+            }
+            
+            if content_type == 'text':
+                bot.send_message(CHANNEL_ID, channel_captions['text'], parse_mode="HTML")
+            elif content_type == 'photo':
+                bot.send_photo(CHANNEL_ID, content.photo[-1].file_id, 
+                             caption=channel_captions['photo'], parse_mode="HTML")
+            elif content_type in CONTENT_TYPES and hasattr(content, content_type):
+                content_obj = getattr(content, content_type)
+                if hasattr(content_obj, 'file_id') and content_obj.file_id:
+                    send_func = getattr(bot, f'send_{content_type}')
+                    send_func(CHANNEL_ID, content_obj.file_id, 
+                             caption=channel_captions.get(content_type, ""))
+
+            # Увеличиваем счётчик одобренных
+            StatsManager.increment_approved()
+            bot.answer_callback_query(call.id, "Сообщение одобрено и отправлено в канал.")
+
+        elif action.startswith("sendtochat"):
+            content_type = action.split('_')[1]
+            content = call.message
+            caption = content.caption if content.caption else "Нет описания"
+            
+            # Отправляем в чат с соответствующим заголовком
+            chat_captions = {
+                'text': f"<b>Сообщение в чат:</b>\n\n{content.text}",
+                'photo': f"<b>Фото:</b>\n\n{caption}",
+                'video': f"<b>Видео:</b>\n\n{caption}",
+                'voice': "Голосовое сообщение:",
+                'animation': "Гифка:"
+            }
+            
+            if content_type == 'text':
+                bot.send_message(CHAT_ID, chat_captions['text'], parse_mode="HTML")
+            elif content_type == 'photo':
+                bot.send_photo(CHAT_ID, content.photo[-1].file_id, 
+                             caption=chat_captions['photo'], parse_mode="HTML")
+            elif content_type in CONTENT_TYPES and hasattr(content, content_type):
+                content_obj = getattr(content, content_type)
+                if hasattr(content_obj, 'file_id') and content_obj.file_id:
+                    send_func = getattr(bot, f'send_{content_type}')
+                    send_func(CHAT_ID, content_obj.file_id, 
+                             caption=chat_captions.get(content_type, ""))
+
+            # Увеличиваем счётчик одобренных (отправка в чат тоже считается одобрением)
+            StatsManager.increment_approved()
+            bot.answer_callback_query(call.id, "Сообщение отправлено в чат.")
+
+        elif action == "reject":
+            # Увеличиваем счётчик отклонённых
+            StatsManager.increment_rejected()
+            bot.answer_callback_query(call.id, "Сообщение отклонено.")
+
+        # Удаление сообщений у всех администраторов
+        if message_id in stores['sent']:
+            for admin_id, sent_message_id in stores['sent'][message_id]:
+                try:
+                    bot.delete_message(admin_id, sent_message_id)
+                except Exception as e:
+                    print(f"Ошибка при удалении сообщения у администратора {admin_id}: {e}")
+            # Удаляем запись о сообщении из хранилища
+            del stores['sent'][message_id]
+
+    except Exception as e:
+        print(f"Ошибка при обработке сообщения: {e}")
+        bot.answer_callback_query(call.id, "Произошла ошибка при отправке сообщения.")
+
+def check_internet_connection() -> bool:
+    """Проверка интернет-соединения с кэшированием"""
+    try:
+        response = requests.get("https://api.telegram.org", timeout=3)
+        return response.status_code == 200
+    except (requests.RequestException, ConnectionError, TimeoutError):
+        return False
+
+def daily_cleanup_scheduler():
+    """Планировщик для ежедневной очистки в 00:00"""
+    while True:
+        try:
+            now = datetime.now()
+            # Вычисляем время до следующей полуночи
+            next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            sleep_seconds = (next_midnight - now).total_seconds()
+            
+            logger.info(f"Следующая ежедневная очистка в: {next_midnight}")
+            time.sleep(sleep_seconds)
+            
+            # Выполняем очистку дневной статистики (данные старше 1 дня)
+            StatsManager.cleanup_daily_stats()
+            StatsManager.save_stats()  # Сохраняем после очистки
+            logger.info("Дневная статистика очищена")
+            
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике ежедневной очистки: {e}")
+            time.sleep(3600)  # Ждём час при ошибке
+
+def weekly_cleanup_scheduler():
+    """Планировщик для еженедельной очистки каждый понедельник в 00:00"""
+    while True:
+        try:
+            now = datetime.now()
+            # Вычисляем время до следующего понедельника в 00:00
+            days_ahead = 0 - now.weekday()  # Понедельник = 0
+            if days_ahead <= 0:  # Если понедельник уже прошёл на этой неделе
+                days_ahead += 7
+            next_monday = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+            sleep_seconds = (next_monday - now).total_seconds()
+            
+            logger.info(f"Следующая недельная очистка в: {next_monday}")
+            time.sleep(sleep_seconds)
+            
+            # Выполняем очистку недельной статистики
+            StatsManager.cleanup_weekly_stats()
+            StatsManager.save_stats()  # Сохраняем после очистки
+            logger.info("Недельная статистика очищена")
+            
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике недельной очистки: {e}")
+            time.sleep(3600)  # Ждём час при ошибке
+
+def monthly_cleanup_scheduler():
+    """Планировщик для ежемесячной очистки каждое 1-е число в 00:00"""
+    while True:
+        try:
+            now = datetime.now()
+            # Вычисляем время до следующего 1-го числа в 00:00
+            if now.day == 1:
+                # Если сегодня 1-е число, то следующий раз будет в следующем месяце
+                next_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=32)
+                next_first = next_month.replace(day=1)
+            else:
+                # Следующий 1-й день текущего месяца
+                next_first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=32)
+                next_first = next_first.replace(day=1)
+            
+            sleep_seconds = (next_first - now).total_seconds()
+            
+            logger.info(f"Следующая месячная очистка в: {next_first}")
+            time.sleep(sleep_seconds)
+            
+            # Выполняем очистку месячной статистики
+            StatsManager.cleanup_monthly_stats()
+            StatsManager.save_stats()  # Сохраняем после очистки
+            logger.info("Месячная статистика очищена")
+            
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике месячной очистки: {e}")
+            time.sleep(3600)  # Ждём час при ошибке
+
+def cleanup_old_delete_requests():
+    """Очистка старых запросов на удаление (старше 1 часа)"""
+    current_time = datetime.now()
+    expired_users = []
+    
+    for user_id, user_data in stores['delete_requests'].items():
+        # Проверяем, если пользователь не в процессе FSM более часа
+        if user_data.get('state') is None:
+            # Если FSM завершен, удаляем через 1 час
+            if 'completion_time' not in user_data:
+                user_data['completion_time'] = current_time
+            elif isinstance(user_data.get('completion_time'), datetime) and current_time - user_data['completion_time'] > timedelta(hours=1):
+                expired_users.append(user_id)
+        else:
+            # Если FSM активен, удаляем через 2 часа
+            if 'start_time' not in user_data:
+                user_data['start_time'] = current_time
+            elif isinstance(user_data.get('start_time'), datetime) and current_time - user_data['start_time'] > timedelta(hours=2):
+                expired_users.append(user_id)
+    
+    # Удаляем истекшие запросы
+    for user_id in expired_users:
+        del stores['delete_requests'][user_id]
+        logger.info("Удален истекший запрос на удаление")
+
+def delete_requests_cleanup_scheduler():
+    """Планировщик для очистки старых запросов на удаление каждые 30 минут"""
+    while True:
+        try:
+            time.sleep(1800)  # 30 минут
+            cleanup_old_delete_requests()
+            logger.info("Очистка старых запросов на удаление выполнена")
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике очистки запросов: {e}")
+            time.sleep(1800)
+
+@retry_operation
+def run_bot():
+    # Загружаем статистику при запуске
+    StatsManager.load_stats()
+    
+    # Устанавливаем команды (меню)
+    try:
+        # Команды по умолчанию для всех пользователей
+        default_commands = [
+            BotCommand("delete_msg", "Запросить удаление сообщения"),
+            BotCommand("stats", "Статистика модерации"),
+            BotCommand("status", "Статус бота")
+        ]
+        bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
+
+        # Команды для админов (на уровне каждого админа)
+        admin_commands = [
+            BotCommand("start", "Запуск бота"),
+            BotCommand("help_admin", "Команды администратора"),
+            BotCommand("stats", "Статистика модерации"),
+            BotCommand("status", "Статус бота"),
+            BotCommand("check_rights", "Проверить права бота"),
+            BotCommand("restart", "Перезапустить бота"),
+            BotCommand("stop", "Остановить бота"),
+            BotCommand("leave", "Закрыть статистику"),
+            BotCommand("delete_msg", "Запросить удаление сообщения")
+        ]
+        for admin_id in ADMIN_IDS:
+            bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+    except Exception as e:
+        logger.warning(f"Не удалось установить меню команд: {e}")
+    
+    # Запускаем все планировщики очистки в отдельных потоках
+    daily_cleanup_thread = threading.Thread(target=daily_cleanup_scheduler, daemon=True)
+    weekly_cleanup_thread = threading.Thread(target=weekly_cleanup_scheduler, daemon=True)
+    monthly_cleanup_thread = threading.Thread(target=monthly_cleanup_scheduler, daemon=True)
+    delete_requests_cleanup_thread = threading.Thread(target=delete_requests_cleanup_scheduler, daemon=True)
+    
+    daily_cleanup_thread.start()
+    weekly_cleanup_thread.start()
+    monthly_cleanup_thread.start()
+    delete_requests_cleanup_thread.start()
+    
+    logger.info("Все планировщики очистки и автосохранения запущены")
+    bot.polling(none_stop=True)
+
+if __name__ == "__main__":
+    try:
+        logger.info("Бот запущен...")
+        run_bot()
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал завершения, сохраняем статистику...")
+        StatsManager.save_stats()
+        logger.info("Статистика сохранена, бот завершён")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        StatsManager.save_stats()
+        logger.info("Статистика сохранена перед завершением")

@@ -1,0 +1,191 @@
+import time
+import os
+import sys
+import subprocess
+import psutil
+import requests
+from datetime import datetime
+
+# Конфигурация
+BOT_TOKEN = ""
+ADMIN_IDS = []
+
+def send_status_message(stage, message_id=None):
+    """Отправить сообщение о статусе перезапуска"""
+    status_messages = {
+        1: "1️⃣ Бот перезапуска открыт",
+        2: "2️⃣ Анонимка бот закрыт", 
+        3: "3️⃣ Анонимка бот открыт",
+        4: "4️⃣ Бот перезапуска закрыт"
+    }
+    
+    message_text = status_messages.get(stage, "Неизвестный статус")
+    
+    for admin_id in ADMIN_IDS:
+        try:
+            if message_id:
+                # Удаляем предыдущее сообщение
+                try:
+                    delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+                    delete_data = {
+                        'chat_id': admin_id,
+                        'message_id': message_id
+                    }
+                    requests.post(delete_url, data=delete_data, timeout=5)
+                except:
+                    pass
+            
+            # Отправляем новое сообщение
+            send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            send_data = {
+                'chat_id': admin_id,
+                'text': message_text
+            }
+            response = requests.post(send_url, data=send_data, timeout=5)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('ok'):
+                    return result['result']['message_id']
+        except Exception as e:
+            print(f"Ошибка при отправке статуса администратору {admin_id}: {e}")
+    
+    return None
+
+def find_anonimka_process():
+    """Найти процесс анонимки бота"""
+    current_pid = os.getpid()
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.info['cmdline']:
+                cmdline = ' '.join(proc.info['cmdline'])
+                if 'ANONIMKA.py' in cmdline and proc.info['pid'] != current_pid:
+                    return proc.info['pid']
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    
+    return None
+
+def kill_anonimka_bot():
+    """Закрыть анонимка бот"""
+    pid = find_anonimka_process()
+    if pid:
+        try:
+            process = psutil.Process(pid)
+            process.terminate()
+            process.wait(timeout=10)  # Ждем до 10 секунд
+            print(f"Анонимка бот (PID {pid}) успешно закрыт")
+            return True
+        except psutil.TimeoutExpired:
+            # Если не закрылся за 10 секунд, принудительно убиваем
+            try:
+                process.kill()
+                print(f"Анонимка бот (PID {pid}) принудительно закрыт")
+                return True
+            except:
+                print(f"Не удалось закрыть анонимка бот (PID {pid})")
+                return False
+        except Exception as e:
+            print(f"Ошибка при закрытии анонимка бот: {e}")
+            return False
+    else:
+        print("Процесс анонимка бот не найден")
+        return False
+
+def start_anonimka_bot():
+    """Запустить анонимка бот"""
+    try:
+        # Путь к основному файлу бота
+        anonimka_path = os.path.join(os.path.dirname(__file__), "ANONIMKA.py")
+        
+        if not os.path.exists(anonimka_path):
+            print(f"Файл {anonimka_path} не найден!")
+            return False
+        
+        # Запускаем анонимка бот в новом процессе
+        if os.name == 'nt':  # Windows
+            subprocess.Popen([sys.executable, anonimka_path], 
+                           creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:  # Linux/Mac
+            subprocess.Popen([sys.executable, anonimka_path], 
+                           stdout=subprocess.DEVNULL, 
+                           stderr=subprocess.DEVNULL)
+        
+        print("Анонимка бот запущен")
+        return True
+    except Exception as e:
+        print(f"Ошибка при запуске анонимка бот: {e}")
+        return False
+
+def main():
+    """Основная функция перезапуска"""
+    print("Запуск системы перезапуска...")
+    
+    message_id = None
+    
+    try:
+        # Этап 1: Бот перезапуска открыт
+        print("Этап 1: Отправка статуса 'Бот перезапуска открыт'")
+        message_id = send_status_message(1, message_id)
+        time.sleep(1)
+        
+        # Этап 2: Закрываем анонимка бот
+        print("Этап 2: Закрытие анонимка бот")
+        if kill_anonimka_bot():
+            message_id = send_status_message(2, message_id)
+            time.sleep(2)  # Даем время на полное закрытие
+        else:
+            print("Не удалось закрыть анонимка бот, продолжаем...")
+            message_id = send_status_message(2, message_id)
+            time.sleep(2)
+        
+        # Этап 3: Запускаем анонимка бот
+        print("Этап 3: Запуск анонимка бот")
+        if start_anonimka_bot():
+            message_id = send_status_message(3, message_id)
+            time.sleep(3)  # Даем время на запуск
+        else:
+            print("Не удалось запустить анонимка бот")
+            message_id = send_status_message(3, message_id)
+            time.sleep(3)
+        
+        # Этап 4: Закрываем бот перезапуска
+        print("Этап 4: Закрытие бот перезапуска")
+        message_id = send_status_message(4, message_id)
+        
+        # Ждем 15 секунд перед закрытием
+        print("Ожидание 15 секунд перед закрытием...")
+        time.sleep(15)
+        
+        # Удаляем последнее сообщение
+        if message_id:
+            for admin_id in ADMIN_IDS:
+                try:
+                    delete_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+                    delete_data = {
+                        'chat_id': admin_id,
+                        'message_id': message_id
+                    }
+                    requests.post(delete_url, data=delete_data, timeout=5)
+                except:
+                    pass
+        
+        print("Перезапуск завершен, бот перезапуска закрывается")
+        
+    except Exception as e:
+        print(f"Ошибка в процессе перезапуска: {e}")
+        # Отправляем сообщение об ошибке
+        for admin_id in ADMIN_IDS:
+            try:
+                send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                send_data = {
+                    'chat_id': admin_id,
+                    'text': f"❌ Ошибка при перезапуске: {e}"
+                }
+                requests.post(send_url, data=send_data, timeout=5)
+            except:
+                pass
+
+if __name__ == "__main__":
+    main()
