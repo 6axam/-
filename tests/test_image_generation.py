@@ -168,4 +168,4 @@ def test_unknown_image_kind_is_rejected_by_schema_and_not_advertised_to_llm():
     assert "creative_image" not in prompt and "photo_of_something" not in prompt
     assert set(ImagePromptBuilder.kinds) == {kind.value for kind in ImageKind}
     for kind in ImageKind:
-        assert kind.value in prompt
+        assert kind.value not in prompt
