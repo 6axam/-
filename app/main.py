@@ -30,6 +30,7 @@ from app.images import DisabledImageGenerationProvider, OpenAIImageProvider, Ope
 def make_provider(settings):
     cls = OpenRouterProvider if settings.llm_provider == "openrouter" else OpenAIProvider
     return cls(settings.llm_api_key, settings.llm_model, settings.llm_base_url,
+               temperature=settings.llm_temperature,
                supports_vision=settings.llm_supports_vision,
                supports_multiple_images=settings.llm_supports_multiple_images)
 

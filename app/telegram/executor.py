@@ -35,13 +35,14 @@ class TelegramActionExecutor:
             try:
                 if not self.image_prompts or not await self.image_prompts.allowed(item.chat_id, self.image_daily_limit, self.image_cooldown_hours): return
                 prompt, visual, references = await self.image_prompts.build(item.chat_id, a.image_intent)
+                kind = a.image_intent.kind.value
                 await self.db.execute("INSERT INTO image_generation_usage(chat_id,provider,prompt,status) VALUES(?,?,?,'processing')", (item.chat_id, self.image_provider.name, prompt))
-                generated = await self._generate_image_with_progress(prompt, references, item.chat_id, a.image_intent.kind)
+                generated = await self._generate_image_with_progress(prompt, references, item.chat_id, kind)
                 photo = BufferedInputFile(generated.data, filename="anya.jpg")
                 sent = await self.bot.send_photo(item.chat_id, photo=photo, caption=a.image_intent.caption)
                 await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="photo", text=a.image_intent.caption or "[generated image]")
                 await self.db.execute("UPDATE image_generation_usage SET status='sent',cost=? WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (generated.cost,item.chat_id))
-                await self.db.execute("INSERT INTO generated_images(chat_id,telegram_message_id,kind,scene,location,activity,clothing_context,provider,model,status) VALUES(?,?,?,?,?,?,?,?,?,?)", (item.chat_id,sent.message_id,a.image_intent.kind,a.image_intent.scene,visual['location'],visual['activity'],visual['clothing'],self.image_provider.name,getattr(self.image_provider,'model',''),'sent'))
+                await self.db.execute("INSERT INTO generated_images(chat_id,telegram_message_id,kind,scene,location,activity,clothing_context,provider,model,status) VALUES(?,?,?,?,?,?,?,?,?,?)", (item.chat_id,sent.message_id,kind,a.image_intent.scene,visual['location'],visual['activity'],visual['clothing'],self.image_provider.name,getattr(self.image_provider,'model',''),'sent'))
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning("image_generation_failed chat_id=%s error=%s", item.chat_id, exc)

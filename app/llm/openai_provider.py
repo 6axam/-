@@ -26,9 +26,10 @@ class Completion:
 class OpenAICompatibleProvider(LLMProvider):
     default_base_url = "https://api.openai.com/v1"
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None, *, transport=None, retries: int = 2, supports_vision: bool = True, supports_multiple_images: bool = True):
+    def __init__(self, api_key: str, model: str, base_url: str | None = None, *, temperature: float | None = None, transport=None, retries: int = 2, supports_vision: bool = True, supports_multiple_images: bool = True):
         self.api_key, self.model = api_key, model
         self.base_url = (base_url or self.default_base_url).rstrip("/")
+        self.temperature = temperature
         self.transport, self.retries = transport, retries
         self.supports_vision = supports_vision
         self.supports_multiple_images = supports_multiple_images
@@ -38,6 +39,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     async def _complete(self, messages: list[dict]) -> Completion:
         payload = {"model": self.model, "messages": messages, "response_format": FORMAT}
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         error = None
         started = time.perf_counter()
         for attempt in range(self.retries + 1):
@@ -66,7 +69,7 @@ class OpenAICompatibleProvider(LLMProvider):
         try:
             return LLMResponse.model_validate_json(raw)
         except (ValidationError, ValueError) as exc:
-            raise StructuredOutputError("LLM returned invalid structured output") from exc
+            raise StructuredOutputError(f"LLM returned invalid structured output: {exc}") from exc
 
     def _user_content(self, request: LLMRequest) -> str | list[dict]:
         text = request.context + "\n\nUSER TURN:\n" + request.user_turn
@@ -93,8 +96,8 @@ class OpenAICompatibleProvider(LLMProvider):
             log.info("llm_call_completed kind=conversation model=%s latency_ms=%s images=%s usage=%s", self.model, completed.latency_ms, len([part for part in request.user_content if isinstance(part, ImageContent)]), completed.usage)
         try:
             return self._parse(raw)
-        except StructuredOutputError:
-            log.warning("Invalid LLM JSON; attempting one repair")
+        except StructuredOutputError as exc:
+            log.warning("Invalid LLM JSON; attempting one repair: %s", exc)
             repair = (await self._complete([
                 {"role": "system", "content": REPAIR_PROMPT},
                 {"role": "user", "content": raw},

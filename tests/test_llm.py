@@ -1,8 +1,10 @@
 import httpx
+import json
 import pytest
 from pydantic import ValidationError
 
 from app.actions.models import ActionType
+from app.config import Settings
 from app.llm.openai_provider import OpenAICompatibleProvider
 from app.llm.openrouter_provider import OpenRouterProvider
 from app.llm.schemas import LLMRequest, LLMResponse
@@ -48,3 +50,27 @@ async def test_provider_retries_temporary_http_error():
     response = await provider.generate(LLMRequest(system="s", context="c", user_turn="u"))
     assert response.actions == []
     assert calls == 2
+
+
+async def test_configured_temperature_reaches_openai_compatible_request():
+    async def handler(request):
+        assert json.loads(request.content)["temperature"] == 0.65
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"actions":[]}'}}]})
+
+    provider = OpenAICompatibleProvider("key", "model", temperature=0.65, transport=httpx.MockTransport(handler), retries=0)
+    response = await provider.generate(LLMRequest(system="s", context="c", user_turn="u"))
+    assert response.actions == []
+
+
+def test_llm_temperature_loads_and_validates_range():
+    settings = Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", llm_temperature=1.25)
+    assert settings.llm_temperature == 1.25
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", llm_temperature=2.01)
+
+
+def test_unknown_dotenv_key_is_not_silently_ignored(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("TELEGRAM_BOT_TOKEN=token\nOWNER_TELEGRAM_ID=1\nLLM_API_KEY=key\nSTALE_SETTING=1\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="stale_setting"):
+        Settings(_env_file=dotenv)

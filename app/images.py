@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import httpx
+from app.actions.models import ImageKind
 
 log = logging.getLogger(__name__)
 
@@ -98,8 +99,11 @@ class ImagePromptBuilder:
         key=f"{now.date()}:{location}:{clothing}"; state=await self.db.fetchone("SELECT * FROM visual_state WHERE chat_id=?",(chat_id,))
         if state and state["period_key"]==key: location,activity,clothing=state["location"],state["activity"],state["clothing_context"]
         else: await self.db.execute("INSERT INTO visual_state(chat_id,location,activity,clothing_context,period_key) VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET location=excluded.location,activity=excluded.activity,clothing_context=excluded.clothing_context,period_key=excluded.period_key,updated_at=CURRENT_TIMESTAMP",(chat_id,location,activity,clothing,key))
-        kind=intent.kind.lower(); kind="casual_photo" if kind=="casual_self_photo" else kind
-        if kind not in self.kinds: raise ValueError("unsupported image intent kind")
+        kind = intent.kind.value
+        if kind not in self.kinds:
+            # This is defensive: ImageIntent normally rejects unknown values
+            # before an action reaches the executor.
+            raise ValueError(f"unsupported image intent kind: {kind}")
         self_present=kind in {"front_selfie","mirror_selfie","casual_photo","outfit_photo"}
         appearance=Path("prompts/appearance.md").read_text(encoding="utf-8").strip() if Path("prompts/appearance.md").exists() else ""
         if self_present and not appearance: raise ValueError("appearance.md must be filled for images containing Anya")

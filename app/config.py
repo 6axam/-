@@ -1,16 +1,19 @@
 from functools import lru_cache
-from pydantic import ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Unknown keys in .env are configuration mistakes, not harmless hints.
+    model_config = SettingsConfigDict(env_file=".env", extra="forbid")
     telegram_bot_token: str
     owner_telegram_id: int
     llm_provider: str = "openai"
     llm_api_key: str
     llm_model: str = "gpt-4o-mini"
     llm_base_url: str | None = None
+    # None deliberately lets the selected provider/model keep its own default.
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     database_url: str = "sqlite:///data/companion.db"
     debounce_seconds: float = 2.0
     message_split_enabled: bool = True

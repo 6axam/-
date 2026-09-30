@@ -10,6 +10,17 @@ class Duration(str, Enum):
     instant = "instant"; short = "short"; medium = "medium"; long = "long"
 
 
+class ImageKind(str, Enum):
+    """The complete image-action contract shared by the LLM and executor."""
+    front_selfie = "front_selfie"
+    mirror_selfie = "mirror_selfie"
+    casual_photo = "casual_photo"
+    outfit_photo = "outfit_photo"
+    object_photo = "object_photo"
+    environment_photo = "environment_photo"
+    meme = "meme"
+
+
 class StickerIntent(BaseModel):
     """What the character wants to communicate before catalog retrieval."""
     model_config = ConfigDict(extra="forbid")
@@ -20,7 +31,7 @@ class StickerIntent(BaseModel):
 
 class ImageIntent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: str = Field(min_length=1, max_length=40)
+    kind: ImageKind
     scene: str = Field(min_length=1, max_length=600)
     importance: float = Field(default=.5, ge=0, le=1)
     caption: str | None = Field(default=None, max_length=800)
