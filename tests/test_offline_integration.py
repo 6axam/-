@@ -42,5 +42,7 @@ async def test_offline_telegram_llm_flow_persists_outgoing_messages(tmp_path):
     assert bot.sent == [(100, "бля"), (100, "а ошибка какая?")]
     rows = await db.fetchall("SELECT text FROM messages WHERE sender='assistant' ORDER BY id")
     assert [row["text"] for row in rows] == ["бля", "а ошибка какая?"]
-    assert bot.typing == 2
+    # One typing event starts immediately when the LLM request begins, then
+    # each outgoing text message has its own typing beat.
+    assert bot.typing == 3
     await db.close()

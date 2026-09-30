@@ -7,7 +7,33 @@ from app.actions.timing import TimingEngine
 from app.telegram.text import strip_emoji
 
 class TelegramActionExecutor:
+    typing_refresh_seconds = 4.0
+
     def __init__(self, bot, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None, image_daily_limit=2, image_cooldown_hours=12): self.bot,self.db,self.stickers,self.lifecycle,self.image_provider,self.image_prompts,self.image_daily_limit,self.image_cooldown_hours,self.timing = bot,db,stickers,lifecycle,image_provider,image_prompts,image_daily_limit,image_cooldown_hours,TimingEngine()
+
+    async def start_generation_typing(self, chat_id: int):
+        """Show typing while an LLM request is in flight, refreshing it safely."""
+        await self.bot.send_chat_action(chat_id, ChatAction.TYPING)
+
+        async def refresh():
+            while True:
+                await asyncio.sleep(self.typing_refresh_seconds)
+                try:
+                    await self.bot.send_chat_action(chat_id, ChatAction.TYPING)
+                except Exception:
+                    # A failed nonessential chat-action must never cancel LLM work.
+                    import logging
+                    logging.getLogger(__name__).debug("generation_typing_refresh_failed chat_id=%s", chat_id, exc_info=True)
+
+        return asyncio.create_task(refresh())
+
+    async def stop_generation_typing(self, session) -> None:
+        session.cancel()
+        try:
+            await session
+        except asyncio.CancelledError:
+            pass
+
     async def execute(self, item):
         a = item.action
         if a.type == ActionType.pause:

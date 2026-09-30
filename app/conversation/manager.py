@@ -13,7 +13,41 @@ class ConversationManager:
         self.initiative_scheduler = None
         self.generations: dict[int, str] = {}
         self.requests: dict[int, asyncio.Task] = {}
+        # One lightweight Telegram typing session per active generation.  It is
+        # deliberately separate from ActionQueue typing, which happens just
+        # before each individual outgoing message.
+        self.typing_sessions: dict[int, tuple[str, object]] = {}
         if scheduler: scheduler.bind(self)
+
+    async def _start_generation_typing(self, chat_id: int, generation: str) -> None:
+        current = self.typing_sessions.get(chat_id)
+        if current and current[0] == generation:
+            return
+        if current:
+            await self._stop_generation_typing(chat_id, current[0])
+        start = getattr(self.queue.executor, "start_generation_typing", None)
+        if not start:
+            return
+        try:
+            session = await start(chat_id)
+        except Exception:
+            # Presence is cosmetic: a Telegram issue must not block a reply.
+            log.debug("generation_typing_start_failed chat_id=%s", chat_id, exc_info=True)
+            return
+        self.typing_sessions[chat_id] = (generation, session)
+
+    async def _stop_generation_typing(self, chat_id: int, generation: str) -> None:
+        current = self.typing_sessions.get(chat_id)
+        if not current or current[0] != generation:
+            return
+        self.typing_sessions.pop(chat_id, None)
+        stop = getattr(self.queue.executor, "stop_generation_typing", None)
+        if not stop:
+            return
+        try:
+            await stop(current[1])
+        except Exception:
+            log.debug("generation_typing_stop_failed chat_id=%s", chat_id, exc_info=True)
 
     async def interrupt(self, chat_id: int) -> None:
         # Do this first and durably: a scheduler may otherwise claim the row
@@ -22,6 +56,7 @@ class ConversationManager:
             await self.scheduler.cancel_chat(chat_id)
         generation = self.generations.pop(chat_id, None)
         if generation:
+            await self._stop_generation_typing(chat_id, generation)
             self.queue.cancel_generation(generation)
         task = self.requests.pop(chat_id, None)
         if task and not task.done():
@@ -56,6 +91,9 @@ class ConversationManager:
             system, context = await self.context.build(user_id, chat_id, text)
             request = LLMRequest(system=system, context=context, user_turn=text, user_content=user_content or [])
             decider = getattr(self.provider, "decide_timing", None)
+            # Begin presence before the first network round-trip, including the
+            # timing decision call.  The same session continues into generate.
+            await self._start_generation_typing(chat_id, generation)
             try:
                 timing = await decider(request) if decider else ResponseTiming()
             except Exception:
@@ -63,8 +101,10 @@ class ConversationManager:
                 timing = ResponseTiming()
             if self.generations.get(chat_id) != generation:
                 log.debug("Dropping stale timing decision for generation %s", generation)
+                await self._stop_generation_typing(chat_id, generation)
                 return generation
             if timing.mode == "delayed":
+                await self._stop_generation_typing(chat_id, generation)
                 await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency)
                 return generation
         return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
@@ -84,6 +124,7 @@ class ConversationManager:
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before LLM request generation=%s", generation)
             return generation
+        await self._start_generation_typing(chat_id, generation)
         target_hint = f"\n\nCURRENT USER MESSAGE ID FOR OPTIONAL REACTION: {target_message_id}" if target_message_id else ""
         task = asyncio.create_task(self.provider.generate(LLMRequest(
             system=system, context=context, user_turn=text + target_hint,
@@ -99,6 +140,7 @@ class ConversationManager:
         finally:
             if self.requests.get(chat_id) is task:
                 self.requests.pop(chat_id, None)
+            await self._stop_generation_typing(chat_id, generation)
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale LLM response for generation %s", generation)
             return generation
