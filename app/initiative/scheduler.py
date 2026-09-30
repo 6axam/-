@@ -47,8 +47,20 @@ class InitiativeScheduler:
             if self.tasks.get(chat_id) is task: self.tasks.pop(chat_id, None)
 
     async def _decide(self, user_id: int, chat_id: int):
-        system, context = await self.context.build(user_id, chat_id)
-        decision = await self.manager.provider.decide_initiative(LLMRequest(system=system, context=context, user_turn=""))
+        built = await self.context.build(user_id, chat_id)
+        if len(built) == 3:
+            system, context, telemetry = built
+        else:
+            # Keep narrow test/dummy contexts compatible; production uses the
+            # three-value compact InitiativeContextBuilder contract.
+            system, context = built
+            telemetry = {}
+        decision = await self.manager.provider.decide_initiative(LLMRequest(
+            system=system,
+            context=context,
+            user_turn="",
+            telemetry={**telemetry, "kind": "initiative"},
+        ))
         log.info("initiative_llm_decision chat_id=%s should_message=%s reason=%s", chat_id, decision.should_message, decision.reason)
         if not decision.should_message:
             log.info("initiative_skipped chat_id=%s reason=%s", chat_id, decision.reason)

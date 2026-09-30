@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 JSON_OBJECT_FORMAT = {"type": "json_object"}
 REPAIR_PROMPT = "Return only valid JSON matching this schema. Do not add markdown. Schema: " + json.dumps(LLMResponse.model_json_schema(), ensure_ascii=False)
 PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION = "Return JSON matching the structured response schema supplied via response_format. Do not add markdown."
+INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION = "Decide only whether Anya should write first now. Use the supplied structured response schema. Do not message merely because time passed; never guilt, pressure, or ask why the user is absent. Mention a current daily event only when context says it is mentionable. About 40–50% of initiative messages may be impulsive, odd, provocative, or lightly conflictual without a useful pretext: tease Maksim, challenge a small thing, make an absurd/suspicious observation or a mock complaint, or send one short strange line just for a reaction. Make this feel spontaneous, not like a manufactured scandal; vary it, do not explain why you wrote, and never use cruelty, humiliation, emotional blackmail, or repeated templates. The remaining initiatives should be ordinary thoughts, events, questions, or natural continuations of a topic."
 
 
 def _strict_schema_from(model) -> dict:
@@ -46,16 +47,28 @@ def _strict_schema_from(model) -> dict:
     return schema
 
 
-def conversation_response_format() -> dict:
-    """Native structured-output contract, derived from ``LLMResponse``."""
+def structured_response_format(model, name: str) -> dict:
+    """Native structured-output contract, derived from one Pydantic model."""
     return {
         "type": "json_schema",
         "json_schema": {
-            "name": "conversation_response",
+            "name": name,
             "strict": True,
-            "schema": _strict_schema_from(LLMResponse),
+            "schema": _strict_schema_from(model),
         },
     }
+
+
+def conversation_response_format() -> dict:
+    return structured_response_format(LLMResponse, "conversation_response")
+
+
+def initiative_response_format() -> dict:
+    return structured_response_format(InitiativeDecision, "initiative_decision")
+
+
+def repair_prompt_for(model) -> str:
+    return "Return only valid JSON matching this schema. Do not add markdown. Schema: " + json.dumps(model.model_json_schema(), ensure_ascii=False)
 
 @dataclass(frozen=True)
 class Completion:
@@ -203,10 +216,52 @@ class OpenAICompatibleProvider(LLMProvider):
             return ResponseTiming()
 
     async def decide_initiative(self, request: LLMRequest) -> InitiativeDecision:
-        prompt = "Return only JSON matching this initiative decision schema: " + json.dumps(InitiativeDecision.model_json_schema(), ensure_ascii=False) + "\nDo not message merely because time passed. Do not guilt-trip, pressure, or ask why the user is absent. should_message=false is normal. reason is internal only."
+        telemetry = dict(request.telemetry)
+        components = dict(telemetry.get("components", {}))
+        components["initiative_policy"] = {
+            "chars": len(INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION),
+            "tokens": estimate_tokens(INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION),
+        }
+        estimated_input_tokens = estimate_tokens(
+            request.system + "\n" + INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION + request.context
+        )
+        if telemetry:
+            log.info(
+                "initiative_request_context chat_id=%s model=%s history_messages=%s estimated_input_tokens=%s components=%s",
+                telemetry.get("chat_id"), self.model, telemetry.get("history_messages"),
+                estimated_input_tokens, components,
+            )
+            if estimated_input_tokens > telemetry.get("target_input_tokens", float("inf")):
+                log.warning(
+                    "initiative_context_target_exceeded chat_id=%s estimated_input_tokens=%s target_input_tokens=%s components=%s",
+                    telemetry.get("chat_id"), estimated_input_tokens,
+                    telemetry.get("target_input_tokens"), components,
+                )
+        prompt = request.system + "\n" + INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION
         try:
-            raw = (await self._complete([{"role": "system", "content": prompt}, {"role": "user", "content": request.context}])).content
-            return InitiativeDecision.model_validate_json(raw)
+            completed = await self._complete(
+                [{"role": "system", "content": prompt}, {"role": "user", "content": request.context}],
+                response_format=initiative_response_format(),
+            )
+            if telemetry:
+                usage = completed.usage or {}
+                log.info(
+                    "initiative_response_usage chat_id=%s model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s usage=%s",
+                    telemetry.get("chat_id"), self.model, completed.latency_ms,
+                    usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"), usage,
+                )
+            return InitiativeDecision.model_validate_json(completed.content)
+        except (ValidationError, ValueError):
+            log.warning("Invalid initiative JSON; attempting one repair", exc_info=True)
+            try:
+                repair = await self._complete([
+                    {"role": "system", "content": repair_prompt_for(InitiativeDecision)},
+                    {"role": "user", "content": completed.content},
+                ])
+                return InitiativeDecision.model_validate_json(repair.content)
+            except Exception:
+                log.warning("Initiative decision unavailable; skipping", exc_info=True)
+                return InitiativeDecision(should_message=False, reason="initiative decision unavailable")
         except Exception:
             log.warning("Initiative decision unavailable; skipping", exc_info=True)
             return InitiativeDecision(should_message=False, reason="initiative decision unavailable")

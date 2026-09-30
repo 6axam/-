@@ -8,11 +8,13 @@ from app.config import Settings
 from app.llm.openai_provider import (
     PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION,
     REPAIR_PROMPT,
+    INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION,
     OpenAICompatibleProvider,
     conversation_response_format,
+    repair_prompt_for,
 )
 from app.llm.openrouter_provider import OpenRouterProvider
-from app.llm.schemas import LLMRequest, LLMResponse
+from app.llm.schemas import InitiativeDecision, LLMRequest, LLMResponse
 
 
 def test_structured_response_validation():
@@ -58,6 +60,45 @@ def test_primary_structured_output_contract_is_derived_from_pydantic(monkeypatch
     assert contract["json_schema"]["schema"]["properties"] == {"fresh": {"type": "string"}}
     assert contract["json_schema"]["schema"]["required"] == ["fresh"]
     assert contract["json_schema"]["schema"]["additionalProperties"] is False
+
+
+async def test_initiative_uses_request_character_and_native_schema_without_text_schema():
+    payloads = []
+
+    async def handler(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"should_message":false,"reason":"no concrete reason"}'}}]})
+
+    provider = OpenAICompatibleProvider("key", "model", transport=httpx.MockTransport(handler), retries=0)
+    decision = await provider.decide_initiative(LLMRequest(
+        system="CORE CHARACTER: Тебя зовут Аня",
+        context="EMOTIONAL STATE\nmood=warm",
+        user_turn="",
+        telemetry={"chat_id": 10, "target_input_tokens": 3500, "components": {}},
+    ))
+
+    assert not decision.should_message
+    assert payloads[0]["response_format"]["json_schema"]["name"] == "initiative_decision"
+    assert "CORE CHARACTER: Тебя зовут Аня" in payloads[0]["messages"][0]["content"]
+    assert INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION in payloads[0]["messages"][0]["content"]
+    assert repair_prompt_for(InitiativeDecision) not in payloads[0]["messages"][0]["content"]
+
+
+async def test_invalid_initiative_output_repairs_with_text_schema_only_on_repair():
+    payloads = []
+
+    async def handler(request):
+        payloads.append(json.loads(request.content))
+        content = "bad" if len(payloads) == 1 else '{"should_message":false,"reason":"repaired"}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    provider = OpenAICompatibleProvider("key", "model", transport=httpx.MockTransport(handler), retries=0)
+    decision = await provider.decide_initiative(LLMRequest(system="CHARACTER", context="CONTEXT", user_turn=""))
+
+    assert decision.reason == "repaired"
+    assert payloads[0]["response_format"]["type"] == "json_schema"
+    assert payloads[1]["response_format"] == {"type": "json_object"}
+    assert payloads[1]["messages"][0]["content"] == repair_prompt_for(InitiativeDecision)
 
 
 def test_openrouter_uses_its_own_default_base_url():
