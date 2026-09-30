@@ -1,0 +1,13 @@
+.env
+data/
+__pycache__/
+*.pyc
+.venv/
+.tools/
+.pytest_cache/
+.cache/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+assets/anya/reference.jpg

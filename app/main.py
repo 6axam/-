@@ -1,0 +1,106 @@
+import asyncio, logging
+from aiogram import Bot, Dispatcher
+from app.config import load_settings
+from app.database.db import Database
+from app.llm.openai_provider import OpenAIProvider
+from app.llm.openrouter_provider import OpenRouterProvider
+from app.conversation.context import ContextBuilder
+from app.conversation.manager import ConversationManager
+from app.conversation.response_scheduler import ResponseScheduler
+from app.conversation.response_timing import ResponseTimingEngine
+from app.conversation.message_splitter import MessageSplitter
+from app.conversation.lifecycle import ConversationLifecycleManager
+from app.actions.queue import ActionQueue
+from app.telegram.executor import TelegramActionExecutor
+from app.telegram.buffer import IncomingBuffer
+from app.telegram.handlers import make_router
+from app.initiative.context import InitiativeContextBuilder
+from app.initiative.scheduler import InitiativeScheduler
+from app.stickers.manager import StickerManager
+from app.stickers.analyzer import StickerAnalysisWorker
+from app.media.manager import MediaManager
+from app.media.analyzer import MediaDescriptionWorker
+from app.stickers.retriever import LocalSemanticEmbeddingProvider
+from app.presence import DailyPresenceManager
+from app.daily_life import DailyLifeScheduler
+from app.weather import WeatherService
+from app.images import DisabledImageGenerationProvider, OpenAIImageProvider, OpenRouterImageProvider, ImagePromptBuilder
+
+
+def make_provider(settings):
+    cls = OpenRouterProvider if settings.llm_provider == "openrouter" else OpenAIProvider
+    return cls(settings.llm_api_key, settings.llm_model, settings.llm_base_url,
+               supports_vision=settings.llm_supports_vision,
+               supports_multiple_images=settings.llm_supports_multiple_images)
+
+def make_embeddings(settings):
+    return LocalSemanticEmbeddingProvider(settings.sticker_embedding_model, settings.sticker_embedding_device)
+
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    s = load_settings(); db = Database(s.database_url); await db.connect()
+    lifecycle = ConversationLifecycleManager(db, s.conversation_cooling_minutes, s.conversation_ended_hours)
+    stickers = StickerManager(db, make_embeddings(s), repeat_window_hours=s.sticker_repeat_window_hours, strong_window_minutes=s.sticker_repeat_strong_window_minutes, selection_strategy=s.sticker_selection_strategy)
+    bot = Bot(s.telegram_bot_token); media = MediaManager(db, bot, s.media_cache_dir, s.max_image_bytes)
+    media.cleanup_expired(s.media_cache_max_age_days)
+    if s.image_generation_enabled and s.image_generation_api_key and s.image_generation_model and s.image_generation_base_url:
+        image_cls = OpenRouterImageProvider if s.image_generation_provider == "openrouter" else OpenAIImageProvider
+        image_provider = image_cls(s.image_generation_api_key, s.image_generation_model, s.image_generation_base_url)
+    else:
+        image_provider = DisabledImageGenerationProvider()
+    weather = WeatherService(s.weather_latitude, s.weather_longitude, enabled=s.weather_enabled, ttl_minutes=s.weather_cache_minutes)
+    executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours); queue = ActionQueue(executor)
+    provider = make_provider(s)
+    from app.character.manager import EmotionalStateManager, PersonalityManager
+    personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
+    scheduler = ResponseScheduler(db, ResponseTimingEngine())
+    context = ContextBuilder(db, personality, emotional_state, stickers, recent_media_hours=s.recent_media_context_hours)
+    splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
+    presence = DailyPresenceManager(db, s.timezone, s.sleep_start_hour, s.wake_hour)
+    manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle, media=media, presence=presence)
+    async def flush(chat_id, messages):
+        if not messages: return
+        user_id = messages[-1].from_user.id
+        parts = []
+        for message in messages:
+            if message.sticker:
+                semantic = await stickers.semantic_for_unique_id(message.sticker.file_unique_id)
+                parts.append(semantic or "Максим отправил стикер.")
+            elif message.photo:
+                parts.append((message.caption or "[Максим отправил изображение]").strip())
+            else:
+                parts.append(message.text or message.caption or "")
+        merged = "\n".join(part for part in parts if part) or "[сообщение без текста]"
+        turn_id = await db.create_turn(user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=[m.message_id for m in messages])
+        images = await media.inputs_for_messages(chat_id, [m.message_id for m in messages]) if provider.supports_vision else []
+        if provider.supports_vision:
+            for message in messages: images.extend(buffer.content_for(chat_id, message.message_id))
+        if not provider.supports_vision and any(message.photo for message in messages):
+            logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
+        await manager.handle_turn(user_id,chat_id,merged,turn_id,messages[-1].message_id,images)
+    buffer = IncomingBuffer(s.debounce_seconds,flush)
+    initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle), s, buffer)
+    manager.initiative_scheduler = initiative
+    worker = StickerAnalysisWorker(db, bot, stickers, provider, s)
+    daily_life = DailyLifeScheduler(db, provider, presence, s)
+    photo_worker = MediaDescriptionWorker(db, provider)
+    dp = Dispatcher(); dp.include_router(make_router(db, buffer, manager, s.owner_telegram_id, stickers=stickers, lifecycle=lifecycle, media=media, analysis_worker=worker if s.sticker_analysis_enabled and provider.supports_vision else None, current_analysis_timeout=s.sticker_current_analysis_timeout_seconds))
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(scheduler.run())
+            tg.create_task(initiative.run())
+            if s.daily_life_enabled: tg.create_task(daily_life.run())
+            if s.sticker_analysis_enabled and provider.supports_vision:
+                for _ in range(min(4, max(1, s.sticker_analysis_workers))): tg.create_task(worker.run())
+            if provider.supports_vision:
+                tg.create_task(photo_worker.run())
+            tg.create_task(dp.start_polling(bot))
+    finally: await db.close()
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except RuntimeError as exc:
+        if str(exc).startswith("Invalid configuration."):
+            raise SystemExit(str(exc)) from None
+        raise
