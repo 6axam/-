@@ -5,7 +5,12 @@ from pydantic import ValidationError
 
 from app.actions.models import ActionType
 from app.config import Settings
-from app.llm.openai_provider import OpenAICompatibleProvider
+from app.llm.openai_provider import (
+    PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION,
+    REPAIR_PROMPT,
+    OpenAICompatibleProvider,
+    conversation_response_format,
+)
 from app.llm.openrouter_provider import OpenRouterProvider
 from app.llm.schemas import LLMRequest, LLMResponse
 
@@ -19,10 +24,12 @@ def test_structured_response_validation():
 
 async def test_provider_repairs_broken_json_once():
     calls = 0
+    payloads = []
 
     async def handler(request):
         nonlocal calls
         calls += 1
+        payloads.append(json.loads(request.content))
         content = "not json" if calls == 1 else '{"actions":[{"type":"text","text":"готово"}]}'
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
@@ -30,6 +37,27 @@ async def test_provider_repairs_broken_json_once():
     response = await provider.generate(LLMRequest(system="s", context="c", user_turn="u"))
     assert calls == 2
     assert response.actions[0].text == "готово"
+    assert payloads[0]["response_format"]["type"] == "json_schema"
+    assert REPAIR_PROMPT not in payloads[0]["messages"][0]["content"]
+    assert PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION in payloads[0]["messages"][0]["content"]
+    assert payloads[1]["response_format"] == {"type": "json_object"}
+    assert payloads[1]["messages"][0]["content"] == REPAIR_PROMPT
+
+
+def test_primary_structured_output_contract_is_derived_from_pydantic(monkeypatch):
+    monkeypatch.setattr(
+        LLMResponse,
+        "model_json_schema",
+        classmethod(lambda cls: {"type": "object", "properties": {"fresh": {"type": "string"}}}),
+    )
+
+    contract = conversation_response_format()
+
+    assert contract["type"] == "json_schema"
+    assert contract["json_schema"]["strict"] is True
+    assert contract["json_schema"]["schema"]["properties"] == {"fresh": {"type": "string"}}
+    assert contract["json_schema"]["schema"]["required"] == ["fresh"]
+    assert contract["json_schema"]["schema"]["additionalProperties"] is False
 
 
 def test_openrouter_uses_its_own_default_base_url():

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import json
 import logging
 import time
@@ -14,8 +15,47 @@ from app.llm.prompts import read_prompt
 from app.conversation.tokens import estimate_tokens
 
 log = logging.getLogger(__name__)
-FORMAT = {"type": "json_object"}
+JSON_OBJECT_FORMAT = {"type": "json_object"}
 REPAIR_PROMPT = "Return only valid JSON matching this schema. Do not add markdown. Schema: " + json.dumps(LLMResponse.model_json_schema(), ensure_ascii=False)
+PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION = "Return JSON matching the structured response schema supplied via response_format. Do not add markdown."
+
+
+def _strict_schema_from(model) -> dict:
+    """Derive OpenAI Structured Outputs' strict schema from one Pydantic model.
+
+    OpenAI-compatible strict mode requires every object property to be listed
+    in ``required``. Pydantic's nullable/default fields are already encoded as
+    unions with ``null``; requiring them therefore does not change their value
+    semantics, only makes the API contract acceptable.
+    """
+    schema = copy.deepcopy(model.model_json_schema())
+
+    def normalize(value):
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict):
+                value["required"] = list(properties)
+                value["additionalProperties"] = False
+            for child in value.values():
+                normalize(child)
+        elif isinstance(value, list):
+            for child in value:
+                normalize(child)
+
+    normalize(schema)
+    return schema
+
+
+def conversation_response_format() -> dict:
+    """Native structured-output contract, derived from ``LLMResponse``."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "conversation_response",
+            "strict": True,
+            "schema": _strict_schema_from(LLMResponse),
+        },
+    }
 
 @dataclass(frozen=True)
 class Completion:
@@ -38,8 +78,12 @@ class OpenAICompatibleProvider(LLMProvider):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    async def _complete(self, messages: list[dict]) -> Completion:
-        payload = {"model": self.model, "messages": messages, "response_format": FORMAT}
+    async def _complete(self, messages: list[dict], *, response_format: dict | None = None) -> Completion:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "response_format": response_format or JSON_OBJECT_FORMAT,
+        }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
         error = None
@@ -89,7 +133,7 @@ class OpenAICompatibleProvider(LLMProvider):
         if any(isinstance(part, ImageContent) for part in request.user_content):
             log.info("image_vision_requested images=%s", len([part for part in request.user_content if isinstance(part, ImageContent)]))
         messages = [
-            {"role": "system", "content": request.system + "\n" + REPAIR_PROMPT},
+            {"role": "system", "content": request.system + "\n" + PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION},
             {"role": "user", "content": self._user_content(request)},
         ]
         has_telemetry = bool(request.telemetry)
@@ -100,15 +144,15 @@ class OpenAICompatibleProvider(LLMProvider):
             "tokens": (len(request.user_turn) + 2) // 3 if request.user_turn else 0,
         }
         components["json_schema_instructions"] = {
-            "chars": len(REPAIR_PROMPT),
-            "tokens": (len(REPAIR_PROMPT) + 2) // 3,
+            "chars": len(PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION),
+            "tokens": (len(PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION) + 2) // 3,
         }
         telemetry["components"] = components
         # Estimate the exact textual payload assembled below, rather than only
         # summing rounded component estimates.  Image-token accounting remains
         # provider-specific, so API usage is the source of truth afterwards.
         telemetry["estimated_input_tokens"] = estimate_tokens(
-            request.system + "\n" + REPAIR_PROMPT + request.context + "\n\nUSER TURN:\n" + request.user_turn
+            request.system + "\n" + PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION + request.context + "\n\nUSER TURN:\n" + request.user_turn
         )
         telemetry["model"] = self.model
         if has_telemetry:
@@ -125,7 +169,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     telemetry.get("chat_id"), telemetry.get("generation_id"), telemetry["estimated_input_tokens"],
                     telemetry.get("target_input_tokens"), components,
                 )
-        completed = await self._complete(messages); raw = completed.content
+        completed = await self._complete(messages, response_format=conversation_response_format()); raw = completed.content
         if has_telemetry or completed.usage or any(isinstance(part, ImageContent) for part in request.user_content):
             usage = completed.usage or {}
             log.info(
