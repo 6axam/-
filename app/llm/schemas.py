@@ -4,11 +4,14 @@ from app.actions.models import Action
 
 
 class MemoryCandidate(BaseModel):
-    decision: str = Field(pattern="^(IGNORE|SAVE|UPDATE_EXISTING)$")
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["IGNORE", "SAVE", "UPDATE_EXISTING"]
     content: str = Field(max_length=1000)
     importance: float = Field(default=.5, ge=0, le=1)
     confidence: float = Field(default=.7, ge=0, le=1)
     tags: list[str] = Field(default_factory=list, max_length=8)
+    # UPDATE_EXISTING is valid only for an id included in RELEVANT MEMORIES.
+    target_memory_id: int | None = Field(default=None, gt=0)
 
 
 class StateUpdate(BaseModel):
@@ -125,6 +128,7 @@ class StickerSemantics(BaseModel):
 class LLMResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     actions: list[Action] = Field(default_factory=list, max_length=12)
+    memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
     response_timing: ResponseTiming = Field(default_factory=ResponseTiming)

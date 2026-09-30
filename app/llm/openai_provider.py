@@ -209,8 +209,17 @@ class OpenAICompatibleProvider(LLMProvider):
     async def decide_timing(self, request: LLMRequest) -> ResponseTiming:
         prompt = "Return only JSON: {\"mode\": \"immediate\"|\"delayed\", \"urgency\": \"urgent\"|\"normal\"|\"low\"}. Choose delayed only when an abstract availability rhythm is appropriate; never invent a concrete activity."
         try:
-            raw = (await self._complete([{"role": "system", "content": prompt}, {"role": "user", "content": request.context + "\nUSER TURN:\n" + request.user_turn}])).content
-            return ResponseTiming.model_validate_json(raw)
+            completed = await self._complete([
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": request.context + "\nUSER TURN:\n" + request.user_turn},
+            ])
+            usage = completed.usage or {}
+            log.info(
+                "timing_response_usage model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s cost=%s",
+                self.model, completed.latency_ms, usage.get("prompt_tokens"),
+                usage.get("completion_tokens"), usage.get("total_tokens"), usage.get("cost"),
+            )
+            return ResponseTiming.model_validate_json(completed.content)
         except Exception:
             log.warning("Timing decision unavailable; responding immediately", exc_info=True)
             return ResponseTiming()

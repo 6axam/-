@@ -5,11 +5,13 @@ from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTi
 log = logging.getLogger(__name__)
 
 class ConversationManager:
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
         self.presence = presence
+        self.memory_extractor = memory_extractor
+        self.memory_manager = memory_manager
         self.initiative_scheduler = None
         self.generations: dict[int, str] = {}
         self.requests: dict[int, asyncio.Task] = {}
@@ -153,6 +155,18 @@ class ConversationManager:
             await self.emotional_state.apply(response.emotional_update)
         if self.lifecycle:
             await self.lifecycle.apply(chat_id, response.conversation)
+        if self.memory_extractor and self.memory_manager:
+            try:
+                candidates = self.memory_extractor.extract(response.memory_candidates)
+                if candidates:
+                    await self.memory_manager.apply(
+                        user_id, chat_id, candidates, source_turn_id=turn_id,
+                        retrieved_memory_ids=set(breakdown.get("retrieved_memory_ids", [])),
+                    )
+            except Exception:
+                # A reply that was already generated remains deliverable even
+                # if durable memory is temporarily unavailable.
+                log.exception("memory_persistence_failed chat_id=%s generation=%s", chat_id, generation)
         if not response.actions or all(action.type == ActionType.silence for action in response.actions):
             log.info("silence_selected chat_id=%s generation=%s", chat_id, generation)
             return generation

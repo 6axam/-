@@ -25,6 +25,9 @@ from app.presence import DailyPresenceManager
 from app.daily_life import DailyLifeScheduler
 from app.weather import WeatherService
 from app.images import DisabledImageGenerationProvider, OpenAIImageProvider, OpenRouterImageProvider, ImagePromptBuilder
+from app.memory.extractor import MemoryExtractor
+from app.memory.manager import MemoryManager
+from app.memory.retrieval import MemoryRetrieval
 
 
 def make_provider(settings):
@@ -54,15 +57,21 @@ async def main():
     provider = make_provider(s)
     from app.character.manager import EmotionalStateManager, PersonalityManager
     personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
+    memory_manager = MemoryManager(db)
+    memory_retrieval = MemoryRetrieval(memory_manager)
     scheduler = ResponseScheduler(db, ResponseTimingEngine())
     context = ContextBuilder(db, personality, emotional_state, stickers,
                              recent_media_hours=s.recent_media_context_hours,
                              recent_max_messages=s.context_recent_max_messages,
                              recent_token_budget=s.context_recent_token_budget,
-                             target_input_tokens=s.context_target_input_tokens)
+                             target_input_tokens=s.context_target_input_tokens,
+                             memory_retrieval=memory_retrieval,
+                             memory_token_budget=s.memory_context_token_budget,
+                             memory_max_items=s.memory_context_max_items)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(db, s.timezone, s.sleep_start_hour, s.wake_hour)
-    manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle, media=media, presence=presence)
+    manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
+                                  media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager)
     async def flush(chat_id, messages):
         if not messages: return
         user_id = messages[-1].from_user.id

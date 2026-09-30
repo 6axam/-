@@ -46,6 +46,21 @@ async def test_provider_repairs_broken_json_once():
     assert payloads[1]["messages"][0]["content"] == REPAIR_PROMPT
 
 
+async def test_timing_call_logs_provider_usage(caplog):
+    async def handler(_request):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"mode":"immediate","urgency":"normal"}'}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16, "cost": .001},
+        })
+
+    provider = OpenAICompatibleProvider("key", "model", transport=httpx.MockTransport(handler), retries=0)
+    with caplog.at_level("INFO"):
+        result = await provider.decide_timing(LLMRequest(system="s", context="c", user_turn="u"))
+    assert result.mode == "immediate"
+    assert "timing_response_usage model=model" in caplog.text
+    assert "prompt_tokens=12" in caplog.text and "total_tokens=16" in caplog.text
+
+
 def test_primary_structured_output_contract_is_derived_from_pydantic(monkeypatch):
     monkeypatch.setattr(
         LLMResponse,

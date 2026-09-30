@@ -202,6 +202,25 @@ MIGRATIONS = [
     CREATE TABLE IF NOT EXISTS generated_images (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, telegram_message_id INTEGER, kind TEXT NOT NULL, scene TEXT NOT NULL, location TEXT, activity TEXT, clothing_context TEXT, provider TEXT, model TEXT, status TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE INDEX IF NOT EXISTS idx_generated_images_recent ON generated_images(chat_id,created_at DESC);
     """,
+    """
+    -- Long-term facts are deliberately scoped to one Telegram chat.  The
+    -- same Telegram user can be present in unrelated private/group chats.
+    CREATE TABLE IF NOT EXISTS memories (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        chat_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        importance REAL NOT NULL CHECK(importance >= 0 AND importance <= 1),
+        confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+        tags TEXT NOT NULL DEFAULT '[]',
+        source_turn_id INTEGER REFERENCES conversation_turns(id),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_chat_user_recent ON memories(chat_id, user_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memories_chat_user_importance ON memories(chat_id, user_id, importance DESC, confidence DESC);
+    """,
 ]
 
 
