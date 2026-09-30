@@ -55,7 +55,11 @@ async def main():
     from app.character.manager import EmotionalStateManager, PersonalityManager
     personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
     scheduler = ResponseScheduler(db, ResponseTimingEngine())
-    context = ContextBuilder(db, personality, emotional_state, stickers, recent_media_hours=s.recent_media_context_hours)
+    context = ContextBuilder(db, personality, emotional_state, stickers,
+                             recent_media_hours=s.recent_media_context_hours,
+                             recent_max_messages=s.context_recent_max_messages,
+                             recent_token_budget=s.context_recent_token_budget,
+                             target_input_tokens=s.context_target_input_tokens)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(db, s.timezone, s.sleep_start_hour, s.wake_hour)
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle, media=media, presence=presence)

@@ -73,12 +73,22 @@ class ConversationManager:
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before context build generation=%s", generation)
             return generation
-        system, context = await self.context.build(user_id, chat_id, text)
+        build_with_breakdown = getattr(self.context, "build_with_breakdown", None)
+        if build_with_breakdown:
+            system, context, breakdown = await build_with_breakdown(user_id, chat_id, text)
+        else:
+            # Compatibility for narrow test/dummy contexts; production uses
+            # ContextBuilder and always emits numeric breakdown telemetry.
+            system, context = await self.context.build(user_id, chat_id, text)
+            breakdown = {}
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before LLM request generation=%s", generation)
             return generation
         target_hint = f"\n\nCURRENT USER MESSAGE ID FOR OPTIONAL REACTION: {target_message_id}" if target_message_id else ""
-        task = asyncio.create_task(self.provider.generate(LLMRequest(system=system, context=context, user_turn=text + target_hint, user_content=user_content or [])))
+        task = asyncio.create_task(self.provider.generate(LLMRequest(
+            system=system, context=context, user_turn=text + target_hint,
+            user_content=user_content or [], telemetry={**breakdown, "generation_id": generation},
+        )))
         self.requests[chat_id] = task
         try: response = await task
         except asyncio.CancelledError:

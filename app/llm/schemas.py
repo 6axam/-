@@ -51,6 +51,8 @@ class LLMRequest(BaseModel):
     context: str
     # Images belong only to the current turn. History stays compact text/semantic metadata.
     user_content: list[ContentPart] = Field(default_factory=list)
+    # Internal observability metadata; never sent to the provider as message content.
+    telemetry: dict = Field(default_factory=dict)
 
 
 PersonalityCategory = Literal["music", "games", "technology", "media", "interest", "opinion", "habit", "communication", "inside_joke", "other"]

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.llm.base import LLMProvider, ProviderError, StructuredOutputError
 from app.llm.schemas import DailyLifeDecision, ImageContent, InitiativeDecision, LLMRequest, LLMResponse, ResponseTiming, StickerSemantics, TextContent
 from app.llm.prompts import read_prompt
+from app.conversation.tokens import estimate_tokens
 
 log = logging.getLogger(__name__)
 FORMAT = {"type": "json_object"}
@@ -91,9 +92,49 @@ class OpenAICompatibleProvider(LLMProvider):
             {"role": "system", "content": request.system + "\n" + REPAIR_PROMPT},
             {"role": "user", "content": self._user_content(request)},
         ]
+        has_telemetry = bool(request.telemetry)
+        telemetry = dict(request.telemetry)
+        components = dict(telemetry.get("components", {}))
+        components["current_user_turn"] = {
+            "chars": len(request.user_turn),
+            "tokens": (len(request.user_turn) + 2) // 3 if request.user_turn else 0,
+        }
+        components["json_schema_instructions"] = {
+            "chars": len(REPAIR_PROMPT),
+            "tokens": (len(REPAIR_PROMPT) + 2) // 3,
+        }
+        telemetry["components"] = components
+        # Estimate the exact textual payload assembled below, rather than only
+        # summing rounded component estimates.  Image-token accounting remains
+        # provider-specific, so API usage is the source of truth afterwards.
+        telemetry["estimated_input_tokens"] = estimate_tokens(
+            request.system + "\n" + REPAIR_PROMPT + request.context + "\n\nUSER TURN:\n" + request.user_turn
+        )
+        telemetry["model"] = self.model
+        if has_telemetry:
+            log.info(
+                "conversation_request_context chat_id=%s generation_id=%s model=%s history_messages=%s "
+                "history_token_budget=%s estimated_input_tokens=%s components=%s",
+                telemetry.get("chat_id"), telemetry.get("generation_id"), self.model,
+                telemetry.get("history_messages"), telemetry.get("history_token_budget"),
+                telemetry["estimated_input_tokens"], components,
+            )
+            if telemetry["estimated_input_tokens"] > telemetry.get("target_input_tokens", float("inf")):
+                log.warning(
+                    "conversation_context_target_exceeded chat_id=%s generation_id=%s estimated_input_tokens=%s target_input_tokens=%s components=%s",
+                    telemetry.get("chat_id"), telemetry.get("generation_id"), telemetry["estimated_input_tokens"],
+                    telemetry.get("target_input_tokens"), components,
+                )
         completed = await self._complete(messages); raw = completed.content
-        if completed.usage or any(isinstance(part, ImageContent) for part in request.user_content):
-            log.info("llm_call_completed kind=conversation model=%s latency_ms=%s images=%s usage=%s", self.model, completed.latency_ms, len([part for part in request.user_content if isinstance(part, ImageContent)]), completed.usage)
+        if has_telemetry or completed.usage or any(isinstance(part, ImageContent) for part in request.user_content):
+            usage = completed.usage or {}
+            log.info(
+                "conversation_response_usage chat_id=%s generation_id=%s model=%s latency_ms=%s images=%s "
+                "prompt_tokens=%s completion_tokens=%s total_tokens=%s usage=%s",
+                telemetry.get("chat_id"), telemetry.get("generation_id"), self.model, completed.latency_ms,
+                len([part for part in request.user_content if isinstance(part, ImageContent)]),
+                usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("total_tokens"), usage,
+            )
         try:
             return self._parse(raw)
         except StructuredOutputError as exc:

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     # None deliberately lets the selected provider/model keep its own default.
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    context_recent_max_messages: int = Field(default=24, ge=1, le=200)
+    context_recent_token_budget: int = Field(default=1500, ge=100, le=20000)
+    context_target_input_tokens: int = Field(default=5000, ge=500, le=100000)
     database_url: str = "sqlite:///data/companion.db"
     debounce_seconds: float = 2.0
     message_split_enabled: bool = True
