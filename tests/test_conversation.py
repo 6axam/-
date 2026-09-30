@@ -35,7 +35,7 @@ async def test_stale_response_cannot_enqueue_actions_after_interrupt():
     manager = ConversationManager(provider, FakeContext(), ActionQueue(executor))
     work = asyncio.create_task(manager.handle_turn(1, 100, "old turn"))
     await provider.started.wait()
-    manager.interrupt(100)
+    await manager.interrupt(100)
     provider.release.set()
     await work
     await asyncio.sleep(.02)

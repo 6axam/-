@@ -37,6 +37,25 @@ class ResponseScheduler:
     async def recover_after_restart(self):
         await self.db.execute("UPDATE scheduled_responses SET status='pending',updated_at=CURRENT_TIMESTAMP WHERE status='processing'")
 
+    async def cancel_chat(self, chat_id: int) -> int:
+        """Persistently invalidate delayed work superseded by a new user turn."""
+        result = await self.db.execute(
+            "UPDATE scheduled_responses SET status='cancelled',updated_at=CURRENT_TIMESTAMP "
+            "WHERE chat_id=? AND status IN ('pending','processing')",
+            (chat_id,),
+        )
+        if result.rowcount:
+            log.info("scheduled_responses_cancelled chat_id=%s count=%s", chat_id, result.rowcount)
+        return result.rowcount
+
+    async def is_current(self, record) -> bool:
+        """Final durable fence against a claim/cancel race."""
+        row = await self.db.fetchone(
+            "SELECT 1 FROM scheduled_responses WHERE id=? AND chat_id=? AND generation_id=? AND status='processing'",
+            (record["id"], record["chat_id"], record["generation_id"]),
+        )
+        return bool(row)
+
     async def has_pending(self, chat_id: int) -> bool:
         return bool(await self.db.fetchone("SELECT 1 FROM scheduled_responses WHERE chat_id=? AND status='pending'", (chat_id,)))
 
@@ -49,7 +68,7 @@ class ResponseScheduler:
         for record in await self.due():
             # Claim first: restart/repeated loop invocations cannot generate twice.
             claimed = await self.db.execute("UPDATE scheduled_responses SET status='processing', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'", (record["id"],))
-            if claimed.rowcount:
+            if claimed.rowcount and await self.is_current(record):
                 await self.manager.handle_scheduled(record)
 
     async def run(self):
@@ -67,4 +86,5 @@ class ResponseScheduler:
         return self._task
 
     async def complete(self, schedule_id: int):
-        await self.db.execute("UPDATE scheduled_responses SET status='completed', updated_at=CURRENT_TIMESTAMP WHERE id=?", (schedule_id,))
+        # Never overwrite cancellation that raced with a claimed response.
+        await self.db.execute("UPDATE scheduled_responses SET status='completed', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'", (schedule_id,))

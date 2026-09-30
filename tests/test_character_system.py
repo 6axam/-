@@ -91,11 +91,12 @@ async def test_delayed_response_persists_coalesces_and_rebuilds_context(tmp_path
     manager = ConversationManager(provider, ContextBuilder(db, personality, emotions), ActionQueue(executor), personality, emotions, scheduler)
     await manager.handle_turn(1, 10, "старое")
     first = await db.fetchone("SELECT id FROM scheduled_responses WHERE status='pending'")
-    # A second message joins the same pending response rather than creating another one.
+    # A new turn persistently supersedes the old delayed response.
     await db.record_message(chat_id=10, telegram_message_id=2, user_id=1, sender="user", kind="text", text="новое")
     await manager.handle_turn(1, 10, "новое")
     rows = await db.fetchall("SELECT * FROM scheduled_responses WHERE status='pending'")
-    assert len(rows) == 1 and rows[0]["id"] == first["id"]
+    assert len(rows) == 1 and rows[0]["id"] != first["id"]
+    assert (await db.fetchone("SELECT status FROM scheduled_responses WHERE id=?", (first["id"],)))["status"] == "cancelled"
     # No executor/typing action exists during the waiting period.
     assert executor.actions == []
     await asyncio.sleep(.02)
@@ -104,7 +105,7 @@ async def test_delayed_response_persists_coalesces_and_rebuilds_context(tmp_path
     assert executor.actions == ["fresh"]
     assert "новое" in provider.requests[-1].user_turn
     assert "новое" in provider.requests[-1].context
-    assert (await db.fetchone("SELECT status FROM scheduled_responses WHERE id=?", (first["id"],)))["status"] == "completed"
+    assert (await db.fetchone("SELECT status FROM scheduled_responses WHERE id=?", (rows[0]["id"],)))["status"] == "completed"
     await db.close()
 
 

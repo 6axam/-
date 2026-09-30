@@ -32,7 +32,7 @@ def make_router(db, buffer, manager, owner_telegram_id: int, stickers=None, life
         inserted = await db.record_message(chat_id=message.chat.id, telegram_message_id=message.message_id, user_id=message.from_user.id, sender="user", kind="text", text=message.text, reply_to=message.reply_to_message.message_id if message.reply_to_message else None)
         if inserted is None:
             return
-        manager.interrupt(message.chat.id)
+        await manager.interrupt(message.chat.id)
         if lifecycle: await lifecycle.on_user_message(message.chat.id)
         await buffer.add(message.chat.id,message)
     @router.message(F.photo)
@@ -43,7 +43,7 @@ def make_router(db, buffer, manager, owner_telegram_id: int, stickers=None, life
         caption = message.caption or ""
         inserted = await db.record_message(chat_id=message.chat.id, telegram_message_id=message.message_id, user_id=message.from_user.id, sender="user", kind="photo", text=caption or "[photo]", reply_to=message.reply_to_message.message_id if message.reply_to_message else None)
         if inserted is None: return
-        manager.interrupt(message.chat.id)
+        await manager.interrupt(message.chat.id)
         if lifecycle: await lifecycle.on_user_message(message.chat.id)
         if media:
             await media.ingest_photo(chat_id=message.chat.id, message_id=message.message_id, photo=message.photo[-1])
@@ -59,7 +59,7 @@ def make_router(db, buffer, manager, owner_telegram_id: int, stickers=None, life
         inserted = await db.record_message(chat_id=message.chat.id, telegram_message_id=message.message_id, user_id=message.from_user.id, sender="user", kind="sticker", sticker_file_id=s.file_id, reply_to=message.reply_to_message.message_id if message.reply_to_message else None)
         if inserted is None:
             return
-        manager.interrupt(message.chat.id)
+        await manager.interrupt(message.chat.id)
         if lifecycle: await lifecycle.on_user_message(message.chat.id)
         sticker_id = None
         if stickers:

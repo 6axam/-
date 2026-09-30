@@ -15,7 +15,11 @@ class ConversationManager:
         self.requests: dict[int, asyncio.Task] = {}
         if scheduler: scheduler.bind(self)
 
-    def interrupt(self, chat_id: int) -> None:
+    async def interrupt(self, chat_id: int) -> None:
+        # Do this first and durably: a scheduler may otherwise claim the row
+        # while a new incoming Telegram message is still in debounce.
+        if self.scheduler:
+            await self.scheduler.cancel_chat(chat_id)
         generation = self.generations.pop(chat_id, None)
         if generation:
             self.queue.cancel_generation(generation)
@@ -38,7 +42,7 @@ class ConversationManager:
         log.debug("nonverbal_reaction_received chat_id=%s emoji=%s", chat_id, emoji)
 
     async def handle_turn(self, user_id, chat_id, text, turn_id=None, target_message_id=None, user_content=None):
-        self.interrupt(chat_id)
+        await self.interrupt(chat_id)
         generation = str(uuid.uuid4()); self.generations[chat_id] = generation
         if self.presence and await self.presence.is_sleeping(chat_id):
             state = await self.presence.state(chat_id)
@@ -66,7 +70,13 @@ class ConversationManager:
         return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
 
     async def _generate(self, user_id, chat_id, text, generation, turn_id=None, target_message_id=None, user_content=None):
+        if self.generations.get(chat_id) != generation:
+            log.debug("Dropping stale generation before context build generation=%s", generation)
+            return generation
         system, context = await self.context.build(user_id, chat_id, text)
+        if self.generations.get(chat_id) != generation:
+            log.debug("Dropping stale generation before LLM request generation=%s", generation)
+            return generation
         target_hint = f"\n\nCURRENT USER MESSAGE ID FOR OPTIONAL REACTION: {target_message_id}" if target_message_id else ""
         task = asyncio.create_task(self.provider.generate(LLMRequest(system=system, context=context, user_turn=text + target_hint, user_content=user_content or [])))
         self.requests[chat_id] = task
@@ -122,12 +132,21 @@ class ConversationManager:
         return True
 
     async def handle_scheduled(self, record):
+        if not await self.scheduler.is_current(record):
+            log.info("scheduled_response_stale_before_load id=%s", record["id"])
+            return
         user_id, text, message_ids = await self.context.db.pending_user_message_ids(record["chat_id"])
         if not user_id or not text:
             await self.scheduler.complete(record["id"])
             return
+        if not await self.scheduler.is_current(record):
+            log.info("scheduled_response_stale_before_generation id=%s", record["id"])
+            return
         generation = record["generation_id"]
         self.generations[record["chat_id"]] = generation
         images = await self.media.inputs_for_messages(record["chat_id"], message_ids) if self.media and getattr(self.provider, "supports_vision", False) else []
+        if not await self.scheduler.is_current(record):
+            log.info("scheduled_response_stale_before_dispatch id=%s", record["id"])
+            return
         await self._generate(user_id, record["chat_id"], text, generation, user_content=images)
         await self.scheduler.complete(record["id"])

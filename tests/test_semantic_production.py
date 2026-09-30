@@ -146,6 +146,7 @@ async def test_delayed_generation_keeps_pending_photo_bytes(tmp_path):
             return [ImageContent(data=b"photo", mime_type="image/jpeg")]
     class Scheduler:
         def bind(self, _): pass
+        async def is_current(self, _): return True
         async def complete(self, _): pass
     db = await db_for(tmp_path); await db.record_message(chat_id=3, telegram_message_id=8, sender="user", user_id=4, kind="photo", text="[photo]")
     provider = Provider(); manager = ConversationManager(provider, ContextBuilder(db), ActionQueue(SimpleNamespace(execute=lambda _: None)), scheduler=Scheduler(), media=Media())
