@@ -84,21 +84,25 @@ class ImagePromptBuilder:
         now=datetime.now(self.zone); college=now.weekday()<5 and 8<=now.hour<14
         weather = await self.weather.current() if self.weather else None
         location,activity,outfit_key=("college classroom","classes","college") if college else (("home bedroom","sleeping","sleep") if now.hour<8 else ("home bedroom","free time","home"))
-        clothing=self.rng.choice(self.outfits[outfit_key])
         is_outdoors = college
-        event=await self.db.fetchone("SELECT title,availability FROM daily_events WHERE chat_id=? AND julianday(starts_at)<=julianday('now') AND julianday(ends_at)>julianday('now') ORDER BY ends_at DESC LIMIT 1",(chat_id,))
+        event=await self.db.fetchone("SELECT id,title,availability FROM daily_events WHERE chat_id=? AND julianday(starts_at)<=julianday('now') AND julianday(ends_at)>julianday('now') ORDER BY ends_at DESC LIMIT 1",(chat_id,))
         if event:
             location=activity=event["title"]
             is_outdoors = event["availability"] == "away"
-            if event["availability"] in {"busy","away"}:
-                clothing=self.rng.choice(self.outfits["outside"]); outfit_key="outside"
-        # Temperature changes clothing only for a new outdoor/college period.
-        if weather and is_outdoors:
-            if weather.apparent_temperature_c <= 8: clothing += ", plus a warm dark coat or jacket"
-            elif weather.apparent_temperature_c <= 17: clothing += ", plus a dark jacket"
-        key=f"{now.date()}:{location}:{clothing}"; state=await self.db.fetchone("SELECT * FROM visual_state WHERE chat_id=?",(chat_id,))
-        if state and state["period_key"]==key: location,activity,clothing=state["location"],state["activity"],state["clothing_context"]
-        else: await self.db.execute("INSERT INTO visual_state(chat_id,location,activity,clothing_context,period_key) VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET location=excluded.location,activity=excluded.activity,clothing_context=excluded.clothing_context,period_key=excluded.period_key,updated_at=CURRENT_TIMESTAMP",(chat_id,location,activity,clothing,key))
+        # A period is defined only by stable world facts.  Random clothing and
+        # the rendered activity must never decide whether saved state matches.
+        key = f"{now.date()}:event:{event['id']}" if event else f"{now.date()}:baseline:{outfit_key}"
+        state=await self.db.fetchone("SELECT * FROM visual_state WHERE chat_id=?",(chat_id,))
+        if state and state["period_key"] == key:
+            location,activity,clothing=state["location"],state["activity"],state["clothing_context"]
+        else:
+            selection_key = "outside" if event and event["availability"] in {"busy","away"} else outfit_key
+            clothing=self.rng.choice(self.outfits[selection_key])
+            # Temperature changes clothing only when a new period is created.
+            if weather and is_outdoors:
+                if weather.apparent_temperature_c <= 8: clothing += ", plus a warm dark coat or jacket"
+                elif weather.apparent_temperature_c <= 17: clothing += ", plus a dark jacket"
+            await self.db.execute("INSERT INTO visual_state(chat_id,location,activity,clothing_context,period_key) VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET location=excluded.location,activity=excluded.activity,clothing_context=excluded.clothing_context,period_key=excluded.period_key,updated_at=CURRENT_TIMESTAMP",(chat_id,location,activity,clothing,key))
         kind = intent.kind.value
         if kind not in self.kinds:
             # This is defensive: ImageIntent normally rejects unknown values

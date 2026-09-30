@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +11,37 @@ from app.database.db import Database
 from app.images import GeneratedImage, ImagePromptBuilder
 from app.llm.schemas import LLMResponse
 from app.telegram.executor import TelegramActionExecutor
+
+
+class FixedDateTime(datetime):
+    current = datetime(2026, 9, 28, 10, tzinfo=ZoneInfo("Europe/Kyiv"))
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.current.astimezone(tz) if tz else cls.current
+
+
+class OutfitRng:
+    def __init__(self, college_outfits):
+        self.college_outfits = iter(college_outfits)
+        self.outfit_choices = 0
+
+    def choice(self, values):
+        if values == ImagePromptBuilder.outfits["college"]:
+            self.outfit_choices += 1
+            return next(self.college_outfits)
+        return values[0]
+
+
+async def visual_builder(tmp_path, monkeypatch, rng):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "prompts").mkdir(exist_ok=True)
+    (tmp_path / "prompts" / "appearance.md").write_text("canonical appearance", encoding="utf-8")
+    db = Database(f"sqlite:///{tmp_path / 'visual.sqlite'}")
+    await db.connect()
+    import app.images as images
+    monkeypatch.setattr(images, "datetime", FixedDateTime)
+    return db, ImagePromptBuilder(db, rng=rng)
 
 
 async def test_self_photo_pipeline_persists_visual_and_image_metadata(tmp_path, monkeypatch):
@@ -35,6 +68,56 @@ async def test_meme_does_not_need_appearance(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path); db=Database(f"sqlite:///{tmp_path/'b.sqlite'}"); await db.connect()
     prompt,_,_=await ImagePromptBuilder(db).build(1,ImageIntent(kind="meme",scene="a silly compiler error",importance=.2))
     assert "Immutable appearance" not in prompt
+    await db.close()
+
+
+async def test_visual_state_is_identical_for_two_prompts_in_one_period(tmp_path, monkeypatch):
+    rng = OutfitRng(["first college outfit", "second college outfit"])
+    db, builder = await visual_builder(tmp_path, monkeypatch, rng)
+    intent = ImageIntent(kind="casual_photo", scene="ordinary moment")
+
+    _, first, _ = await builder.build(1, intent)
+    _, second, _ = await builder.build(1, intent)
+
+    assert first == second
+    assert rng.outfit_choices == 1
+    await db.close()
+
+
+async def test_existing_sqlite_visual_state_survives_new_builder_and_rng(tmp_path, monkeypatch):
+    first_rng = OutfitRng(["saved college outfit"])
+    db, first_builder = await visual_builder(tmp_path, monkeypatch, first_rng)
+    intent = ImageIntent(kind="casual_photo", scene="ordinary moment")
+    _, saved, _ = await first_builder.build(1, intent)
+
+    new_rng = OutfitRng(["must not be chosen"])
+    restarted_builder = ImagePromptBuilder(db, rng=new_rng)
+    _, restored, _ = await restarted_builder.build(1, intent)
+
+    assert restored == saved
+    assert new_rng.outfit_choices == 0
+    assert (await db.fetchone("SELECT clothing_context FROM visual_state WHERE chat_id=1"))["clothing_context"] == "saved college outfit"
+    await db.close()
+
+
+async def test_new_period_may_create_a_new_visual_state(tmp_path, monkeypatch):
+    rng = OutfitRng(["monday college outfit", "tuesday college outfit"])
+    db, builder = await visual_builder(tmp_path, monkeypatch, rng)
+    intent = ImageIntent(kind="casual_photo", scene="ordinary moment")
+    _, first, _ = await builder.build(1, intent)
+    first_key = (await db.fetchone("SELECT period_key FROM visual_state WHERE chat_id=1"))["period_key"]
+
+    FixedDateTime.current += timedelta(days=1)
+    try:
+        _, second, _ = await builder.build(1, intent)
+    finally:
+        FixedDateTime.current -= timedelta(days=1)
+    second_key = (await db.fetchone("SELECT period_key FROM visual_state WHERE chat_id=1"))["period_key"]
+
+    assert first["clothing"] == "monday college outfit"
+    assert second["clothing"] == "tuesday college outfit"
+    assert first_key != second_key
+    assert rng.outfit_choices == 2
     await db.close()
 
 
