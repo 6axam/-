@@ -104,3 +104,19 @@ async def test_primary_request_keeps_current_turn_and_attaches_numeric_breakdown
     assert all(set(size) == {"chars", "tokens"} for size in telemetry["components"].values())
     assert "CURRENT_TURN_MUST_STAY" not in str(telemetry)
     await db.close()
+
+
+async def test_canonical_life_background_is_in_system_prompt_and_telemetry(tmp_path):
+    db = await make_db(tmp_path)
+    system, _, breakdown = await ContextBuilder(db).build_with_breakdown(1, 10, "привет")
+
+    assert "LIFE BACKGROUND" in system
+    for fact in ("Житомире", "18 лет", "2 курсе", "дизайна"):
+        assert fact in system
+    size = breakdown["components"]["life_background"]
+    assert size["chars"] >= 600 and size["chars"] <= 1200
+    assert size["tokens"] <= 400
+    # The compact life block may add context, but must not turn a normal
+    # empty-history request into an oversized prompt by itself.
+    assert breakdown["estimated_input_tokens"] < 5600
+    await db.close()

@@ -88,14 +88,16 @@ class ContextBuilder:
         history = "\n".join(selected_history)
 
         character = "IMMUTABLE CORE PERSONALITY\n" + read_prompt("character.md")
+        life_background = "LIFE BACKGROUND\n" + read_prompt("life_background.md")
         profile = "USER PROFILE\n" + read_prompt("user_profile.md")
         response = response_rules()
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
-        system = character + "\n\n" + profile + "\n\n" + response + "\n\n" + memory_policy + "\n\n" + media_rule
+        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + memory_policy + "\n\n" + media_rule
 
         components = {
-            "character_prompt": component_size(character), "user_profile": component_size(profile),
+            "character_prompt": component_size(character), "life_background": component_size(life_background),
+            "user_profile": component_size(profile),
             "response_instructions": component_size(response), "memory_policy": component_size(memory_policy),
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
