@@ -7,6 +7,7 @@ from app.conversation.manager import ConversationManager
 from app.conversation.response_scheduler import ResponseScheduler
 from app.conversation.response_timing import ResponseTimingEngine
 from app.database.db import Database
+from app.daily_life import DailyLifeScheduler
 from app.llm.schemas import LLMResponse, ResponseTiming
 from app.presence import DailyPresenceManager
 
@@ -37,6 +38,30 @@ async def test_weekend_morning_is_free_with_default_college_weekdays(tmp_path):
     await db.close()
 
 
+def test_wake_jitter_is_restart_stable_and_bounded():
+    assert DailyPresenceManager._wake_jitter(7, "2026-10-01") == -27
+    assert DailyPresenceManager._wake_jitter(7, "2026-10-01") == -27
+    assert -45 <= DailyPresenceManager._wake_jitter(8, "2026-10-01") <= 45
+
+
+async def test_daily_life_does_not_create_event_during_college_phase(tmp_path):
+    db = await make_db(tmp_path)
+    await db.record_message(chat_id=10, telegram_message_id=1, user_id=1, sender="user", kind="text", text="привет")
+
+    class Presence:
+        timezone_name = "Europe/Kyiv"
+        async def state(self, _chat_id):
+            return {"availability": "available", "phase": "college", "event": None}
+
+    class Provider:
+        async def decide_daily_life(self, _request):
+            raise AssertionError("college phase must not request a mundane event")
+
+    await DailyLifeScheduler(db, Provider(), Presence(), SimpleNamespace(daily_life_check_interval_minutes=30)).run_once()
+    assert await db.fetchall("SELECT * FROM daily_events") == []
+    await db.close()
+
+
 def test_college_and_real_event_change_backend_delay_only():
     timing = ResponseTimingEngine(college_normal_delay_multiplier=2, college_active_delay_cap_seconds=30)
     free = timing.delay("normal", active_conversation=False, daily_phase="free")
@@ -58,7 +83,8 @@ async def test_free_period_skips_llm_requested_delay_without_real_event(tmp_path
             return False
 
     class Provider:
-        async def decide_timing(self, _request): return ResponseTiming(mode="delayed", urgency="normal")
+        async def decide_timing(self, _request):
+            raise AssertionError("free/no-event turn must not call decide_timing")
         async def generate(self, _request):
             self.generated = True
             return LLMResponse()

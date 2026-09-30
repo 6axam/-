@@ -1,16 +1,23 @@
 """Persistent, deliberately approximate daily rhythm; all timestamps are UTC."""
+import hashlib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
 class DailyPresenceManager:
-    def __init__(self, db, timezone_name: str = "Europe/Kyiv", sleep_start: int = 1, wake_hour: int = 9,
+    def __init__(self, db, timezone_name: str = "Europe/Kyiv", sleep_start: int = 1, wake_hour: int = 7,
                  college_start_hour: int = 8, college_end_hour: int = 15,
                  college_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)):
         self.db, self.zone = db, ZoneInfo(timezone_name)
         self.timezone_name, self.sleep_start, self.wake_hour = timezone_name, sleep_start, wake_hour
         self.college_start_hour, self.college_end_hour = college_start_hour, college_end_hour
         self.college_weekdays = frozenset(college_weekdays)
+
+    @staticmethod
+    def _wake_jitter(chat_id: int, day: str) -> int:
+        """Stable ±45 minute jitter, independent of Python hash randomization."""
+        digest = hashlib.sha256(f"{chat_id}:{day}".encode("utf-8")).digest()
+        return int.from_bytes(digest[:2], "big") % 91 - 45
 
     def _is_college_window(self, local) -> bool:
         if local.weekday() not in self.college_weekdays:
@@ -28,7 +35,7 @@ class DailyPresenceManager:
         row = await self.db.fetchone("SELECT * FROM daily_presence WHERE chat_id=?", (chat_id,))
         if not row or row["local_day"] != day:
             # Stable per day/chat jitter keeps a reboot from changing the night.
-            jitter = (hash(f"{chat_id}:{day}") % 91) - 45
+            jitter = self._wake_jitter(chat_id, day)
             crosses_midnight = self.sleep_start > self.wake_hour
             sleeping = (local.hour >= self.sleep_start or local.hour < self.wake_hour) if crosses_midnight else (self.sleep_start <= local.hour < self.wake_hour)
             wake = local.replace(hour=self.wake_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=jitter)

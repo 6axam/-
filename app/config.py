@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     recent_media_context_hours: int = 24
     timezone: str = "Europe/Kyiv"
     sleep_start_hour: int = 1
-    wake_hour: int = 9
+    wake_hour: int = 7
     college_start_hour: int = Field(default=8, ge=0, le=23)
     college_end_hour: int = Field(default=15, ge=0, le=23)
     college_weekdays: Annotated[tuple[int, ...], NoDecode] = (0, 1, 2, 3, 4)

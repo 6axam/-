@@ -10,7 +10,9 @@ class DailyLifeScheduler:
         rows=await self.db.fetchall("SELECT chat_id,max(user_id) user_id FROM messages WHERE sender='user' GROUP BY chat_id")
         for row in rows:
             state=await self.presence.state(row['chat_id'])
-            if state['availability']=='sleep' or state['event']: continue
+            # College/travel is already the regular daytime background; do
+            # not layer invented mundane events on top of it.
+            if state['availability']=='sleep' or state['event'] or state['phase']=='college': continue
             recent=await self.db.fetchone("SELECT 1 FROM daily_events WHERE chat_id=? AND julianday('now')-julianday(created_at)<0.125",(row['chat_id'],))
             if recent: continue
             context=f"CURRENT DAILY STATE\navailability={state['availability']}; timezone={self.presence.timezone_name}. Create only a present mundane event, not a retrospective excuse."
