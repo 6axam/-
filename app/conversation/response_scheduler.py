@@ -14,16 +14,23 @@ class ResponseScheduler:
 
     def bind(self, manager): self.manager = manager
 
-    async def schedule(self, user_id: int, chat_id: int, generation_id: str, urgency: str):
+    async def schedule(self, user_id: int, chat_id: int, generation_id: str, urgency: str, *, daily_state: dict | None = None):
         state = await self.manager.emotional_state.get() if self.manager and self.manager.emotional_state else None
         signals = await self.db.chat_response_signals(chat_id)
-        delay = self.timing.delay(urgency, state, active_conversation=signals["seconds_since_last"] < 75, pending_messages=signals["user_messages"])
+        event = (daily_state or {}).get("event")
+        event_availability = event["availability"] if event and event["availability"] in {"busy", "away"} else None
+        delay = self.timing.delay(
+            urgency, state, active_conversation=signals["seconds_since_last"] < 75,
+            pending_messages=signals["user_messages"], daily_phase=(daily_state or {}).get("phase", "free"),
+            event_availability=event_availability,
+        )
         respond_after = (datetime.now(timezone.utc) + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S")
+        delay_event_id = event["id"] if event_availability else None
         existing = await self.db.fetchone("SELECT id FROM scheduled_responses WHERE chat_id=? AND status='pending'", (chat_id,))
         if existing:
-            await self.db.execute("UPDATE scheduled_responses SET respond_after=?, generation_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (respond_after, generation_id, existing["id"]))
+            await self.db.execute("UPDATE scheduled_responses SET respond_after=?, generation_id=?, delay_event_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (respond_after, generation_id, delay_event_id, existing["id"]))
             return existing["id"]
-        result = await self.db.execute("INSERT INTO scheduled_responses(chat_id,user_id,respond_after,generation_id,status) VALUES(?,?,?,?, 'pending')", (chat_id, user_id, respond_after, generation_id))
+        result = await self.db.execute("INSERT INTO scheduled_responses(chat_id,user_id,respond_after,generation_id,status,delay_event_id) VALUES(?,?,?,?, 'pending',?)", (chat_id, user_id, respond_after, generation_id, delay_event_id))
         return result.lastrowid
 
     async def schedule_at(self, user_id: int, chat_id: int, generation_id: str, respond_after: str, urgency: str = "normal"):

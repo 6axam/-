@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Kyiv"
     sleep_start_hour: int = 1
     wake_hour: int = 9
+    college_start_hour: int = Field(default=8, ge=0, le=23)
+    college_end_hour: int = Field(default=15, ge=0, le=23)
+    college_normal_delay_multiplier: float = Field(default=1.5, ge=1.0, le=4.0)
+    college_active_delay_cap_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     image_generation_enabled: bool = False
     image_generation_daily_limit: int = 2
     image_generation_cooldown_hours: float = 12

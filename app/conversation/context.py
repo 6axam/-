@@ -78,11 +78,11 @@ class ContextBuilder:
             return f"{row['sender']}: [фото: {row['photo_description']}]"
         return f"{row['sender']}: {row['text'] or '[' + row['type'] + ']'}"
 
-    async def build(self, user_id, chat_id, user_turn):
-        system, context, _ = await self.build_with_breakdown(user_id, chat_id, user_turn)
+    async def build(self, user_id, chat_id, user_turn, delay_event=None):
+        system, context, _ = await self.build_with_breakdown(user_id, chat_id, user_turn, delay_event=delay_event)
         return system, context
 
-    async def build_with_breakdown(self, user_id, chat_id, user_turn):
+    async def build_with_breakdown(self, user_id, chat_id, user_turn, delay_event=None):
         messages = await self.db.recent_messages(chat_id, limit=self.recent_max_messages, recent_media_hours=self.recent_media_hours)
         selected_history = self._select_history([self._render(row) for row in messages])
         history = "\n".join(selected_history)
@@ -101,6 +101,7 @@ class ContextBuilder:
             "personality_state": component_size(""), "emotional_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),
             "relevant_memories": component_size(""),
+            "delay_event_context": component_size(""),
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
             "request_wrapper": component_size("\n\nUSER TURN:\n"),
         }
@@ -144,6 +145,13 @@ class ContextBuilder:
         if images:
             block = "RECENT IMAGES YOU SENT\n" + "\n".join(f"- {row['kind']}: {row['scene']} ({row['location']}, {row['activity']})" for row in images)
             blocks.append(block); components["recent_image_metadata"] = component_size(block)
+        if delay_event and delay_event["availability"] in {"busy", "away"}:
+            block = (
+                "DELAY CONTEXT\n"
+                f"The immediately preceding reply was delayed while this real event was active: {delay_event['title']} ({delay_event['availability']}). "
+                "This is context, not an excuse: mention it only if it naturally fits, never invent extra details, and do not apologize automatically."
+            )
+            blocks.append(block); components["delay_event_context"] = component_size(block)
         blocks.append("RECENT CONVERSATION\n" + (history or "(none)"))
 
         breakdown = {

@@ -59,7 +59,9 @@ async def main():
     personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
-    scheduler = ResponseScheduler(db, ResponseTimingEngine())
+    scheduler = ResponseScheduler(db, ResponseTimingEngine(
+        s.college_normal_delay_multiplier, s.college_active_delay_cap_seconds,
+    ))
     context = ContextBuilder(db, personality, emotional_state, stickers,
                              recent_media_hours=s.recent_media_context_hours,
                              recent_max_messages=s.context_recent_max_messages,
@@ -69,7 +71,10 @@ async def main():
                              memory_token_budget=s.memory_context_token_budget,
                              memory_max_items=s.memory_context_max_items)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
-    presence = DailyPresenceManager(db, s.timezone, s.sleep_start_hour, s.wake_hour)
+    presence = DailyPresenceManager(
+        db, s.timezone, s.sleep_start_hour, s.wake_hour,
+        s.college_start_hour, s.college_end_hour,
+    )
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager)
     async def flush(chat_id, messages):

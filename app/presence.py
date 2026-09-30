@@ -4,9 +4,18 @@ from zoneinfo import ZoneInfo
 
 
 class DailyPresenceManager:
-    def __init__(self, db, timezone_name: str = "Europe/Kyiv", sleep_start: int = 1, wake_hour: int = 9):
+    def __init__(self, db, timezone_name: str = "Europe/Kyiv", sleep_start: int = 1, wake_hour: int = 9,
+                 college_start_hour: int = 8, college_end_hour: int = 15):
         self.db, self.zone = db, ZoneInfo(timezone_name)
         self.timezone_name, self.sleep_start, self.wake_hour = timezone_name, sleep_start, wake_hour
+        self.college_start_hour, self.college_end_hour = college_start_hour, college_end_hour
+
+    def _is_college_window(self, hour: int) -> bool:
+        if self.college_start_hour == self.college_end_hour:
+            return False
+        if self.college_start_hour < self.college_end_hour:
+            return self.college_start_hour <= hour < self.college_end_hour
+        return hour >= self.college_start_hour or hour < self.college_end_hour
 
     async def state(self, chat_id: int, now: datetime | None = None):
         now = now or datetime.now(timezone.utc)
@@ -24,7 +33,18 @@ class DailyPresenceManager:
             await self.db.execute("INSERT INTO daily_presence(chat_id,local_day,timezone,sleep_until,availability) VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET local_day=excluded.local_day,timezone=excluded.timezone,sleep_until=excluded.sleep_until,availability=excluded.availability,updated_at=CURRENT_TIMESTAMP", (chat_id, day, self.timezone_name, until, "sleep" if sleeping else "available"))
         row = await self.db.fetchone("SELECT * FROM daily_presence WHERE chat_id=?", (chat_id,))
         event = await self.db.fetchone("SELECT * FROM daily_events WHERE chat_id=? AND julianday(starts_at)<=julianday('now') AND julianday(ends_at)>julianday('now') ORDER BY ends_at DESC LIMIT 1", (chat_id,))
-        return {"availability": event["availability"] if event else row["availability"], "sleep_until": row["sleep_until"], "event": event}
+        phase = "college" if row["availability"] != "sleep" and self._is_college_window(local.hour) else "free"
+        return {
+            "availability": event["availability"] if event else row["availability"],
+            "sleep_until": row["sleep_until"], "event": event, "phase": phase,
+            "local_hour": local.hour,
+        }
 
     async def is_sleeping(self, chat_id: int) -> bool:
         return (await self.state(chat_id))["availability"] == "sleep"
+
+    @staticmethod
+    def allows_delayed_reply(state: dict) -> bool:
+        """Free afternoon/evening replies should not gain invented excuses."""
+        event = state.get("event")
+        return state.get("phase") == "college" or bool(event and event["availability"] in {"busy", "away"})

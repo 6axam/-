@@ -81,10 +81,10 @@ class ConversationManager:
     async def handle_turn(self, user_id, chat_id, text, turn_id=None, target_message_id=None, user_content=None):
         await self.interrupt(chat_id)
         generation = str(uuid.uuid4()); self.generations[chat_id] = generation
-        if self.presence and await self.presence.is_sleeping(chat_id):
-            state = await self.presence.state(chat_id)
-            await self.scheduler.schedule_at(user_id, chat_id, generation, state["sleep_until"], "normal")
-            log.info("presence_sleep_defers_turn chat_id=%s until=%s", chat_id, state["sleep_until"])
+        daily_state = await self.presence.state(chat_id) if self.presence else None
+        if daily_state and daily_state["availability"] == "sleep":
+            await self.scheduler.schedule_at(user_id, chat_id, generation, daily_state["sleep_until"], "normal")
+            log.info("presence_sleep_defers_turn chat_id=%s until=%s", chat_id, daily_state["sleep_until"])
             return generation
         if self.scheduler and await self.scheduler.has_pending(chat_id):
             await self.scheduler.schedule(user_id, chat_id, generation, "normal")
@@ -106,18 +106,25 @@ class ConversationManager:
                 await self._stop_generation_typing(chat_id, generation)
                 return generation
             if timing.mode == "delayed":
-                await self._stop_generation_typing(chat_id, generation)
-                await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency)
-                return generation
+                if daily_state and not self.presence.allows_delayed_reply(daily_state):
+                    log.info("timing_delay_skipped_free_period chat_id=%s phase=%s", chat_id, daily_state["phase"])
+                    timing = ResponseTiming()
+                else:
+                    await self._stop_generation_typing(chat_id, generation)
+                    await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency, daily_state=daily_state)
+                    return generation
         return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
 
-    async def _generate(self, user_id, chat_id, text, generation, turn_id=None, target_message_id=None, user_content=None):
+    async def _generate(self, user_id, chat_id, text, generation, turn_id=None, target_message_id=None, user_content=None, delay_event=None):
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before context build generation=%s", generation)
             return generation
         build_with_breakdown = getattr(self.context, "build_with_breakdown", None)
         if build_with_breakdown:
-            system, context, breakdown = await build_with_breakdown(user_id, chat_id, text)
+            if delay_event is not None:
+                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text, delay_event=delay_event)
+            else:
+                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text)
         else:
             # Compatibility for narrow test/dummy contexts; production uses
             # ContextBuilder and always emits numeric breakdown telemetry.
@@ -214,5 +221,12 @@ class ConversationManager:
         if not await self.scheduler.is_current(record):
             log.info("scheduled_response_stale_before_dispatch id=%s", record["id"])
             return
-        await self._generate(user_id, record["chat_id"], text, generation, user_content=images)
+        delay_event_id = record["delay_event_id"] if "delay_event_id" in record.keys() else None
+        delay_event = None
+        if delay_event_id:
+            delay_event = await self.context.db.fetchone(
+                "SELECT id,title,availability,mentionable FROM daily_events WHERE id=? AND chat_id=?",
+                (delay_event_id, record["chat_id"]),
+            )
+        await self._generate(user_id, record["chat_id"], text, generation, user_content=images, delay_event=delay_event)
         await self.scheduler.complete(record["id"])

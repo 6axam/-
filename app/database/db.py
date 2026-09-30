@@ -221,6 +221,12 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_memories_chat_user_recent ON memories(chat_id, user_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memories_chat_user_importance ON memories(chat_id, user_id, importance DESC, confidence DESC);
     """,
+    """
+    -- Persist the real event that justified a delayed reply.  It is optional:
+    -- routine college/travel delay has no post-hoc explanation attached.
+    ALTER TABLE scheduled_responses ADD COLUMN delay_event_id INTEGER REFERENCES daily_events(id);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_delay_event ON scheduled_responses(delay_event_id);
+    """,
 ]
 
 
