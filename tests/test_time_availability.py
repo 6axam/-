@@ -28,6 +28,15 @@ async def test_configurable_college_window_changes_presence_phase(tmp_path):
     await db.close()
 
 
+async def test_weekend_morning_is_free_with_default_college_weekdays(tmp_path):
+    db = await make_db(tmp_path)
+    presence = DailyPresenceManager(db, "Europe/Kyiv", sleep_start=1, wake_hour=7, college_start_hour=8, college_end_hour=15)
+    # Saturday 10:00 local (Kyiv is UTC+3 on this date).
+    weekend = await presence.state(10, datetime(2026, 10, 3, 7, tzinfo=timezone.utc))
+    assert weekend["phase"] == "free"
+    await db.close()
+
+
 def test_college_and_real_event_change_backend_delay_only():
     timing = ResponseTimingEngine(college_normal_delay_multiplier=2, college_active_delay_cap_seconds=30)
     free = timing.delay("normal", active_conversation=False, daily_phase="free")
@@ -69,6 +78,68 @@ async def test_free_period_skips_llm_requested_delay_without_real_event(tmp_path
     assert provider.generated
 
 
+async def test_college_timing_call_receives_compact_daily_signal(tmp_path):
+    class Presence:
+        async def state(self, _chat_id):
+            return {"availability": "available", "phase": "college", "event": None}
+        @staticmethod
+        def allows_delayed_reply(_state): return True
+
+    class Provider:
+        def __init__(self): self.timing_request = None
+        async def decide_timing(self, request):
+            self.timing_request = request
+            return ResponseTiming()
+        async def generate(self, _request): return LLMResponse()
+
+    class Scheduler:
+        def bind(self, _manager): pass
+        async def cancel_chat(self, _chat_id): pass
+        async def has_pending(self, _chat_id): return False
+
+    class Context:
+        async def build(self, *_args): return "system", "conversation context"
+        async def build_with_breakdown(self, *_args): return "system", "conversation context", {}
+
+    provider = Provider()
+    manager = ConversationManager(provider, Context(), ActionQueue(SimpleNamespace(execute=lambda _: None)), scheduler=Scheduler(), presence=Presence())
+    await manager.handle_turn(1, 10, "привет")
+    assert "TIMING DAILY STATE" in provider.timing_request.context
+    assert "phase=college" in provider.timing_request.context
+    assert "active_event=false" in provider.timing_request.context
+
+
+async def test_busy_event_allows_timing_call(tmp_path):
+    event = {"id": 9, "availability": "busy", "mentionable": 0, "title": "private"}
+
+    class Presence:
+        async def state(self, _chat_id): return {"availability": "busy", "phase": "free", "event": event}
+        @staticmethod
+        def allows_delayed_reply(_state): return True
+
+    class Provider:
+        def __init__(self): self.timing_called = False
+        async def decide_timing(self, request):
+            self.timing_called = True
+            assert "active_event=true" in request.context and "event_availability=busy" in request.context
+            return ResponseTiming()
+        async def generate(self, _request): return LLMResponse()
+
+    class Scheduler:
+        def bind(self, _manager): pass
+        async def cancel_chat(self, _chat_id): pass
+        async def has_pending(self, _chat_id): return False
+
+    class Context:
+        async def build(self, *_args): return "system", "conversation context"
+        async def build_with_breakdown(self, *_args): return "system", "conversation context", {}
+
+    provider = Provider()
+    manager = ConversationManager(provider, Context(), ActionQueue(SimpleNamespace(execute=lambda _: None)), scheduler=Scheduler(), presence=Presence())
+    await manager.handle_turn(1, 10, "привет")
+    assert provider.timing_called
+
+
 async def test_only_real_busy_event_is_persisted_as_delay_reason_and_reaches_context(tmp_path):
     db = await make_db(tmp_path)
     await db.record_message(chat_id=10, telegram_message_id=1, user_id=1, sender="user", kind="text", text="привет")
@@ -107,6 +178,21 @@ async def test_only_real_busy_event_is_persisted_as_delay_reason_and_reaches_con
     _, rendered_context, breakdown = await ContextBuilder(db).build_with_breakdown(1, 10, "привет", delay_event=event_row)
     assert "DELAY CONTEXT" in rendered_context and "душ" in rendered_context
     assert breakdown["components"]["delay_event_context"]["tokens"] > 0
+    await db.close()
+
+
+async def test_nonmentionable_event_can_delay_but_never_exposes_title_in_context(tmp_path):
+    db = await make_db(tmp_path)
+    event = await db.execute(
+        "INSERT INTO daily_events(chat_id,title,availability,starts_at,ends_at,mentionable) "
+        "VALUES(?,?,?,datetime('now','-1 minute'),datetime('now','+20 minutes'),0)",
+        (10, "PRIVATE_EVENT_TITLE", "away"),
+    )
+    row = await db.fetchone("SELECT id,title,availability,mentionable FROM daily_events WHERE id=?", (event.lastrowid,))
+    _, context, breakdown = await ContextBuilder(db).build_with_breakdown(1, 10, "привет", delay_event=row)
+    assert "PRIVATE_EVENT_TITLE" not in context
+    assert "DELAY CONTEXT" not in context
+    assert breakdown["components"]["delay_event_context"]["tokens"] == 0
     await db.close()
 
 

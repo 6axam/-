@@ -153,6 +153,16 @@ def test_llm_temperature_loads_and_validates_range():
         Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", llm_temperature=2.01)
 
 
+def test_college_weekdays_parses_compact_env_value_and_validates_days():
+    settings = Settings(
+        _env_file=None, telegram_bot_token="token", owner_telegram_id=1,
+        llm_api_key="key", college_weekdays="0,1,2,3,4",
+    )
+    assert settings.college_weekdays == (0, 1, 2, 3, 4)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", college_weekdays="0,7")
+
+
 def test_unknown_dotenv_key_is_not_silently_ignored(tmp_path):
     dotenv = tmp_path / ".env"
     dotenv.write_text("TELEGRAM_BOT_TOKEN=token\nOWNER_TELEGRAM_ID=1\nLLM_API_KEY=key\nSTALE_SETTING=1\n", encoding="utf-8")

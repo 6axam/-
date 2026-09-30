@@ -73,7 +73,7 @@ async def main():
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,
-        s.college_start_hour, s.college_end_hour,
+        s.college_start_hour, s.college_end_hour, s.college_weekdays,
     )
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager)

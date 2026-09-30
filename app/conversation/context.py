@@ -145,10 +145,10 @@ class ContextBuilder:
         if images:
             block = "RECENT IMAGES YOU SENT\n" + "\n".join(f"- {row['kind']}: {row['scene']} ({row['location']}, {row['activity']})" for row in images)
             blocks.append(block); components["recent_image_metadata"] = component_size(block)
-        if delay_event and delay_event["availability"] in {"busy", "away"}:
+        if delay_event and delay_event["availability"] in {"busy", "away"} and delay_event["mentionable"]:
             block = (
                 "DELAY CONTEXT\n"
-                f"The immediately preceding reply was delayed while this real event was active: {delay_event['title']} ({delay_event['availability']}). "
+                f"This reply is being sent after a delay while this real event was active: {delay_event['title']} ({delay_event['availability']}). "
                 "This is context, not an excuse: mention it only if it naturally fits, never invent extra details, and do not apologize automatically."
             )
             blocks.append(block); components["delay_event_context"] = component_size(block)

@@ -90,8 +90,23 @@ class ConversationManager:
             await self.scheduler.schedule(user_id, chat_id, generation, "normal")
             return generation
         if self.scheduler:
+            # A free period without a persisted busy/away event always goes
+            # straight to generation, so do not spend a second LLM call on a
+            # delay that the backend would reject anyway.
+            if daily_state and not self.presence.allows_delayed_reply(daily_state):
+                log.info("timing_decision_skipped_free_period chat_id=%s phase=%s", chat_id, daily_state["phase"])
+                return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
             system, context = await self.context.build(user_id, chat_id, text)
-            request = LLMRequest(system=system, context=context, user_turn=text, user_content=user_content or [])
+            event = daily_state.get("event") if daily_state else None
+            timing_signal = (
+                "TIMING DAILY STATE\n"
+                f"phase={(daily_state or {}).get('phase', 'unknown')}; "
+                f"active_event={'true' if event else 'false'}; "
+                f"event_availability={event['availability'] if event else 'none'}"
+            )
+            # This compact state is deliberately only attached to the timing
+            # decider. It never enters the primary conversation prompt.
+            request = LLMRequest(system=system, context=context + "\n\n" + timing_signal, user_turn=text, user_content=user_content or [])
             decider = getattr(self.provider, "decide_timing", None)
             # Begin presence before the first network round-trip, including the
             # timing decision call.  The same session continues into generate.
@@ -106,13 +121,9 @@ class ConversationManager:
                 await self._stop_generation_typing(chat_id, generation)
                 return generation
             if timing.mode == "delayed":
-                if daily_state and not self.presence.allows_delayed_reply(daily_state):
-                    log.info("timing_delay_skipped_free_period chat_id=%s phase=%s", chat_id, daily_state["phase"])
-                    timing = ResponseTiming()
-                else:
-                    await self._stop_generation_typing(chat_id, generation)
-                    await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency, daily_state=daily_state)
-                    return generation
+                await self._stop_generation_typing(chat_id, generation)
+                await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency, daily_state=daily_state)
+                return generation
         return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
 
     async def _generate(self, user_id, chat_id, text, generation, turn_id=None, target_message_id=None, user_content=None, delay_event=None):

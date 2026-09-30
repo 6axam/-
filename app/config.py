@@ -1,6 +1,7 @@
 from functools import lru_cache
+from typing import Annotated
 from pydantic import Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
     wake_hour: int = 9
     college_start_hour: int = Field(default=8, ge=0, le=23)
     college_end_hour: int = Field(default=15, ge=0, le=23)
+    college_weekdays: Annotated[tuple[int, ...], NoDecode] = (0, 1, 2, 3, 4)
     college_normal_delay_multiplier: float = Field(default=1.5, ge=1.0, le=4.0)
     college_active_delay_cap_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     image_generation_enabled: bool = False
@@ -97,6 +99,19 @@ class Settings(BaseSettings):
         if value not in {"ranked", "weighted_top"}:
             raise ValueError("STICKER_SELECTION_STRATEGY must be 'ranked' or 'weighted_top'")
         return value
+
+    @field_validator("college_weekdays", mode="before")
+    @classmethod
+    def valid_college_weekdays(cls, value) -> tuple[int, ...]:
+        if isinstance(value, str):
+            try:
+                value = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+            except ValueError as exc:
+                raise ValueError("COLLEGE_WEEKDAYS must be comma-separated weekday numbers 0..6") from exc
+        values = tuple(value)
+        if not values or any(not isinstance(day, int) or day < 0 or day > 6 for day in values):
+            raise ValueError("COLLEGE_WEEKDAYS must contain weekday numbers 0..6")
+        return tuple(dict.fromkeys(values))
 
 
 @lru_cache
