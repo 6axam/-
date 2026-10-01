@@ -7,7 +7,7 @@ from app.conversation.manager import ConversationManager
 from app.database.db import Database
 from app.llm.schemas import LLMResponse, MemoryCandidate
 from app.memory.extractor import MemoryExtractor
-from app.memory.manager import MemoryManager
+from app.memory.manager import MemoryManager, tokens_match
 from app.memory.retrieval import MemoryRetrieval
 
 
@@ -92,6 +92,33 @@ async def test_keyword_retrieval_is_relevant_limited_and_chat_scoped(tmp_path):
     await db.close()
 
 
+async def test_retrieval_matches_conservative_russian_case_forms(tmp_path):
+    db = await make_db(tmp_path)
+    manager = MemoryManager(db)
+    await manager.apply(1, 10, [candidate(
+        "SAVE", "Максиму нравится Полина, дизайнерша из колледжа",
+        tags=["person", "polina", "college"],
+    )])
+    retrieval = MemoryRetrieval(manager)
+    for query in ("сегодня Полину видел", "что там с Полиной", "говорил Полине", "видел дизайнершу", "она в колледже"):
+        rows = await retrieval.search(1, 10, query)
+        assert len(rows) == 1, query
+    await db.close()
+
+
+def test_conservative_token_matching_preserves_exact_and_rejects_unrelated_words():
+    assert tokens_match("Полина", "Полина")
+    assert tokens_match("Полина", "Полину")
+    assert tokens_match("дизайнерша", "дизайнершу")
+    assert tokens_match("колледж", "колледже")
+    assert not tokens_match("колледж", "коллега")
+    assert not tokens_match("полина", "полено")
+    assert tokens_match("ESP32", "esp32")
+    assert not tokens_match("ESP32", "ESP8266")
+    assert tokens_match("12345", "12345")
+    assert not tokens_match("12345", "12346")
+
+
 async def test_context_includes_only_relevant_memories_within_budget(tmp_path):
     db = await make_db(tmp_path)
     manager = MemoryManager(db)
@@ -106,6 +133,22 @@ async def test_context_includes_only_relevant_memories_within_budget(tmp_path):
     assert "IRRELEVANT_FILM_FACT" not in context and "HISTORY_B_SECRET" not in context
     assert breakdown["components"]["relevant_memories"]["tokens"] <= 120
     assert len(breakdown["retrieved_memory_ids"]) == 1
+    await db.close()
+
+
+async def test_apply_uses_updated_local_row_for_later_candidate_dedup(tmp_path):
+    db = await make_db(tmp_path)
+    manager = MemoryManager(db)
+    await manager.apply(1, 10, [candidate("SAVE", "Максиму нравится Полина из колледжа", tags=["polina", "romantic_interest"])])
+    row = await db.fetchone("SELECT id FROM memories WHERE chat_id=10")
+    new_fact = "Максиму больше не нравится Полина из колледжа"
+    result = await manager.apply(1, 10, [
+        candidate("UPDATE_EXISTING", new_fact, tags=["polina", "college"], target_memory_id=row["id"]),
+        candidate("SAVE", new_fact, tags=["polina", "college"]),
+    ], retrieved_memory_ids={row["id"]})
+    rows = await db.fetchall("SELECT content FROM memories WHERE chat_id=10")
+    assert (result.updated, result.created, result.skipped) == (1, 0, 1)
+    assert len(rows) == 1 and rows[0]["content"] == new_fact
     await db.close()
 
 

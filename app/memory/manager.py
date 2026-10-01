@@ -9,6 +9,15 @@ from app.llm.schemas import MemoryCandidate
 
 log = logging.getLogger(__name__)
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_CYRILLIC_RE = re.compile(r"^[а-яё]+$", re.IGNORECASE)
+# Conservative Russian inflection endings.  This is intentionally not a
+# morphological analyzer: it only covers obvious case forms while avoiding a
+# broad prefix/fuzzy match between unrelated words.
+_RUSSIAN_ENDINGS = (
+    "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "иях", "ах", "ях",
+    "ов", "ев", "ей", "ам", "ям", "ом", "ем", "ой", "ей", "ую", "юю", "ия", "ья",
+    "а", "я", "у", "ю", "е", "и", "ы", "о",
+)
 
 
 def _words(value: str) -> set[str]:
@@ -30,11 +39,53 @@ def _row_tags(row) -> set[str]:
         return set()
 
 
+def _russian_stems(token: str) -> set[str]:
+    """Return the token and one conservative inflection stem, if any."""
+    token = token.lower().replace("ё", "е")
+    if len(token) < 5 or not _CYRILLIC_RE.fullmatch(token):
+        return {token}
+    stems = {token}
+    for ending in _RUSSIAN_ENDINGS:
+        if token.endswith(ending) and len(token) - len(ending) >= 4:
+            stems.add(token[:-len(ending)])
+    return stems
+
+
+def tokens_match(left: str, right: str) -> bool:
+    """Exact-first match plus conservative Cyrillic case-form matching."""
+    left = left.lower().replace("ё", "е")
+    right = right.lower().replace("ё", "е")
+    if left == right:
+        return True
+    if len(left) < 5 or len(right) < 5:
+        return False
+    if not (_CYRILLIC_RE.fullmatch(left) and _CYRILLIC_RE.fullmatch(right)):
+        return False
+    return bool(_russian_stems(left) & _russian_stems(right))
+
+
+def _matched_tokens(left_words: set[str], right_words: set[str]) -> tuple[int, int]:
+    """Return exact and inflection-form matches without double-counting."""
+    exact_words = left_words & right_words
+    exact = len(exact_words)
+    unmatched_left = left_words - exact_words
+    unmatched_right = right_words - exact_words
+    forms = 0
+    for left in unmatched_left:
+        match = next((right for right in unmatched_right if tokens_match(left, right)), None)
+        if match is not None:
+            forms += 1
+            unmatched_right.remove(match)
+    return exact, forms
+
+
 def _lexical_overlap(left: str, right: str) -> float:
     left_words, right_words = _words(left), _words(right)
     if not left_words or not right_words:
         return 0.0
-    return len(left_words & right_words) / len(left_words | right_words)
+    exact, forms = _matched_tokens(left_words, right_words)
+    matched = exact + forms
+    return matched / (len(left_words) + len(right_words) - matched)
 
 
 @dataclass(frozen=True)
@@ -130,6 +181,9 @@ class MemoryManager:
                  json.dumps(_tags(item.tags), ensure_ascii=False), source_turn_id,
                  target["id"], user_id, chat_id),
             )
+            refreshed = await self.db.fetchone("SELECT * FROM memories WHERE id=?", (target["id"],))
+            if refreshed:
+                rows[rows.index(target)] = refreshed
             updated += 1
 
         return MemoryApplyResult(created=created, updated=updated, skipped=skipped)
@@ -142,13 +196,16 @@ class MemoryManager:
         rows = await self._all_for_chat(user_id, chat_id)
         ranked: list[tuple[float, object]] = []
         for row in rows:
-            content_matches = len(query_words & _words(row["content"]))
-            tag_matches = len(query_words & _row_tags(row))
-            if not content_matches and not tag_matches:
+            content_exact, content_forms = _matched_tokens(query_words, _words(row["content"]))
+            tag_exact, tag_forms = _matched_tokens(query_words, _row_tags(row))
+            if not content_exact and not content_forms and not tag_exact and not tag_forms:
                 continue
             age = float(row["age_hours"] or 0)
             recency = max(0.0, 0.15 - min(age, 720.0) / 720.0 * 0.15)
-            score = content_matches * 3.0 + tag_matches * 4.0 + row["importance"] + row["confidence"] + recency
+            # Exact lexical hits outrank case-form hits; tags keep their
+            # stronger semantic weight without making English tags fuzzy.
+            score = (content_exact * 3.0 + content_forms * 2.25 + tag_exact * 4.0
+                     + tag_forms * 3.0 + row["importance"] + row["confidence"] + recency)
             ranked.append((score, row))
         ranked.sort(key=lambda pair: (pair[0], pair[1]["updated_at"], pair[1]["id"]), reverse=True)
         selected = [row for _, row in ranked[:limit]]
