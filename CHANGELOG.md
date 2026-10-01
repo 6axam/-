@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.14.2 — Natural image posing
+`unreleased` · 2026-10-01
+
+Image prompts теперь отдельно выбирают тип снимка, естественную позу, микродействие и framing; добавлены анти-паттерны против выкрученного тела, неестественных рук и staged influencer поз.
+
 ## v1.14.1 — Action tendencies and test record
 `a369df1` · 2026-10-01
 

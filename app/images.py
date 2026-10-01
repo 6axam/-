@@ -52,6 +52,44 @@ class OpenRouterImageProvider(OpenAIImageProvider):
         return GeneratedImage(base64.b64decode(item["b64_json"]),item.get("media_type","image/png"),(body.get("usage") or {}).get("cost"))
 
 class ImagePromptBuilder:
+    natural_pose_rules = (
+        "The pose must be casual, spontaneous and physically natural: relaxed posture, believable weight distribution, "
+        "relaxed shoulders, natural hand placement and realistic shoulder/arm angles. The body position must make sense "
+        "for holding a phone or being in this environment. Use subtle asymmetry and small lived-in imperfections."
+    )
+    pose_variants = {
+      "front_selfie": [
+        "close chest-up or waist-up selfie; relaxed shoulders, slight head tilt and a calm natural gaze",
+        "quick upper-body selfie while sitting or leaning naturally; one shoulder slightly relaxed, no posed legs in frame",
+        "soft selfie angle with a comfortable stance, weight on one leg only when the lower body is naturally visible",
+      ],
+      "mirror_selfie": [
+        "relaxed mirror stance with weight on one leg, shoulders down, free hand naturally by her side or adjusting clothing",
+        "half-body mirror pose with a small lean against a wall, desk or doorway when the setting supports it",
+        "casual outfit-check posture: body faces the mirror naturally, phone held comfortably, no dramatic hip or back arch",
+      ],
+      "casual_photo": [
+        "context-driven candid posture: sitting, pausing mid-step, leaning lightly, or standing at ease as the scene requires",
+        "ordinary in-the-moment pose with believable balance and relaxed limbs, not deliberately modelling",
+        "natural partial-body or medium framing with posture shaped by the current activity",
+      ],
+      "outfit_photo": [
+        "relaxed outfit-check stance with simple weight distribution, shoulders relaxed and one hand naturally interacting with clothing or a bag",
+        "casual mirror outfit photo with ordinary body balance and a non-runway stance",
+      ],
+    }
+    micro_actions = {
+      "college": ["adjusting a backpack strap", "holding a notebook", "glancing at the phone screen", "tucking hair behind an ear", "pausing between classes"],
+      "home": ["adjusting a sleeve", "touching a necklace", "tucking hair behind an ear", "leaning on one arm", "glancing at the phone screen"],
+      "outside": ["adjusting a jacket", "shifting a bag strap", "pausing mid-step", "holding earbuds or a coffee", "looking briefly to the side"],
+      "generic": ["adjusting hair", "fixing a sleeve", "touching a necklace", "looking at the phone screen", "a small relaxed half-smile"],
+    }
+    framing_variants = {
+      "front_selfie": ["chest-up framing", "waist-up framing with a slight downward phone angle", "face-and-shoulders framing with a little environment visible"],
+      "mirror_selfie": ["half-body mirror framing", "casual three-quarter mirror framing", "full-body mirror framing only when showing the outfit is the point"],
+      "casual_photo": ["loose medium shot with environment visible", "natural seated or half-body framing", "candid medium framing from a believable phone position"],
+      "outfit_photo": ["full-body or three-quarter mirror framing only as needed to show the outfit", "casual three-quarter outfit framing"],
+    }
     outfits = {
       "college": [
         "black flared trousers, fitted dark top, subtle flared sleeves, dark boots",
@@ -70,10 +108,10 @@ class ImagePromptBuilder:
       ],
     }
     kinds={
-      "front_selfie":["front camera selfie, head and shoulders, phone is not visible","front camera held slightly above eye level, head and upper torso, arm partly visible","front-camera selfie whose relaxed pose and framing follow the requested situation; if she is in bed, she is naturally lying or sitting in bed"],
-      "mirror_selfie":["mirror reflection, waist-up, phone directly in front of lower half of face","mirror reflection, three-quarter body, phone covers most of face, free hand near hip","quick imperfect mirror reflection; pose, crop and surrounding detail follow the requested situation"],
-      "casual_photo":["casual candid personal snapshot, natural standing pose"],
-      "outfit_photo":["mirror reflection, full-body outfit check, phone visible in mirror"],
+      "front_selfie":["front-camera personal selfie, phone held naturally with one hand", "quick front-camera selfie at a believable eye-level or slightly-above-eye-level angle"],
+      "mirror_selfie":["ordinary mirror reflection, phone naturally visible in one hand", "quick imperfect mirror selfie with an ordinary room reflection"],
+      "casual_photo":["casual candid personal smartphone snapshot", "ordinary personal photo taken during a real moment"],
+      "outfit_photo":["ordinary mirror outfit check, phone visible in the reflection", "casual outfit photo that still looks like a real personal snapshot"],
       "object_photo":["ordinary close phone photo of the object, no person"],
       "environment_photo":["ordinary candid phone photo of the place, no person"],
       "meme":["internet meme / absurd visual joke, no photographic identity requirement"],
@@ -118,11 +156,15 @@ class ImagePromptBuilder:
         weather_block = f"CURRENT WEATHER (real external data)\n{weather.describe()}; use it only for outdoor light and weather-appropriate outerwear." if weather else "CURRENT WEATHER\nUnavailable — do not invent weather."
         custom_path=Path("prompts/image_custom.md")
         custom=custom_path.read_text(encoding="utf-8").strip() if custom_path.exists() else ""
-        parts=["SITUATION\n"+intent.scene+"\nTreat this as the primary moment of the image. Adapt pose, crop and nearby environment to it, while keeping the persistent world state.","CURRENT VISUAL STATE\n"+f"{now:%Y-%m-%d %H:%M}, {location}; {activity}",weather_block,"LIGHTING\n"+light,"ENVIRONMENT\n"+env,"CAMERA / COMPOSITION\n"+variant,"PHOTO CHARACTER\n"+style,"AVOID\nprofessional photography, fashion shoot, cinematic lighting, studio composition, glamour retouching, beauty-ad aesthetic, unexplained third-person photographer"]
+        place_key = "college" if "college" in location else ("outside" if is_outdoors else "home" if "home" in location else "generic")
+        pose = self.rng.choice(self.pose_variants[kind]) if self_present else "not applicable: no person in this image"
+        micro_action = self.rng.choice(self.micro_actions[place_key]) if self_present else "not applicable"
+        framing = self.rng.choice(self.framing_variants[kind]) if self_present else variant
+        parts=["SITUATION\n"+intent.scene+"\nTreat this as the primary moment of the image. Adapt pose, crop and nearby environment to it, while keeping the persistent world state.","CURRENT VISUAL STATE\n"+f"{now:%Y-%m-%d %H:%M}, {location}; {activity}",weather_block,"LIGHTING\n"+light,"ENVIRONMENT\n"+env,"PHOTO TYPE\n"+variant,"POSE\n"+pose,"MICRO-ACTION\n"+micro_action,"CAMERA / FRAMING\n"+framing,"NATURAL POSE / REALISM\n"+self.natural_pose_rules,"PHOTO CHARACTER\n"+style,"AVOID\nprofessional photography, fashion shoot, cinematic lighting, studio composition, glamour retouching, beauty-ad aesthetic, unexplained third-person photographer, mannequin-like posing, extreme body twisting, awkward arm extension, impossible shoulder angles, forced leg placement, exaggerated wide-leg stance, awkward full-body selfie distortion, dramatic runway posing unless explicitly requested, floating limbs or unnatural hand anatomy"]
         if self_present: parts.insert(0,"IDENTITY / APPEARANCE\n"+appearance+"\nRequire dark brown eyes; preserve identity from canonical reference."); parts.insert(2,"OUTFIT\n"+clothing)
         if custom: parts.append("USER VISUAL PREFERENCES\n"+custom+"\nApply these only when compatible with identity, current world state and the requested scene.")
         prompt="\n\n".join(parts); refs=[self.reference_path.read_bytes()] if self_present and self.reference_path.is_file() else []
-        if self.debug: log.info("image_prompt kind=%s state=%s variant=%s reference_used=%s\n%s",kind,{"location":location,"activity":activity,"clothing":clothing},variant,bool(refs),prompt)
+        if self.debug: log.info("image_prompt kind=%s state=%s type=%s pose=%s micro_action=%s framing=%s reference_used=%s\n%s",kind,{"location":location,"activity":activity,"clothing":clothing},variant,pose,micro_action,framing,bool(refs),prompt)
         return prompt,{"location":location,"activity":activity,"clothing":clothing,"kind":kind},refs
     async def allowed(self,chat_id,limit,cooldown):
         daily=await self.db.fetchone("SELECT count(*) n FROM image_generation_usage WHERE chat_id=? AND status='sent' AND date(created_at)=date('now')",(chat_id,)); recent=await self.db.fetchone("SELECT (julianday('now')-julianday(max(created_at)))*24 h FROM image_generation_usage WHERE chat_id=? AND status='sent'",(chat_id,))

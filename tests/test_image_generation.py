@@ -84,6 +84,20 @@ async def test_visual_state_is_identical_for_two_prompts_in_one_period(tmp_path,
     await db.close()
 
 
+async def test_self_photo_prompt_has_independent_pose_action_framing_and_safety_rules(tmp_path, monkeypatch):
+    db, builder = await visual_builder(tmp_path, monkeypatch, OutfitRng(["ordinary college outfit"]))
+    prompt, _state, _refs = await builder.build(
+        1, ImageIntent(kind="front_selfie", scene="quick photo in a college hallway")
+    )
+
+    for block in ("PHOTO TYPE", "POSE", "MICRO-ACTION", "CAMERA / FRAMING", "NATURAL POSE / REALISM"):
+        assert block in prompt
+    assert "impossible shoulder angles" in prompt
+    assert "awkward full-body selfie distortion" in prompt
+    assert "full-body mirror framing" not in prompt
+    await db.close()
+
+
 async def test_existing_sqlite_visual_state_survives_new_builder_and_rng(tmp_path, monkeypatch):
     first_rng = OutfitRng(["saved college outfit"])
     db, first_builder = await visual_builder(tmp_path, monkeypatch, first_rng)
