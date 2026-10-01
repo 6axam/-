@@ -249,6 +249,26 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_scheduled_reads_due ON scheduled_reads(status, read_after);
     CREATE INDEX IF NOT EXISTS idx_scheduled_reads_chat_status ON scheduled_reads(chat_id, status, id DESC);
     """,
+    """
+    -- Global character autobiography. It deliberately has source-chat
+    -- provenance but is not scoped to a single Telegram conversation.
+    CREATE TABLE IF NOT EXISTS anya_life_events (
+        id INTEGER PRIMARY KEY,
+        occurred_at TEXT,
+        local_day TEXT,
+        kind TEXT NOT NULL DEFAULT 'ordinary',
+        summary TEXT NOT NULL,
+        details TEXT,
+        location_context TEXT,
+        participants_json TEXT NOT NULL DEFAULT '[]',
+        source_chat_id INTEGER,
+        source_turn_id INTEGER REFERENCES conversation_turns(id),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_anya_life_events_recent ON anya_life_events(occurred_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_anya_life_events_day ON anya_life_events(local_day, id DESC);
+    """,
 ]
 
 

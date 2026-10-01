@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     context_target_input_tokens: int = Field(default=5600, ge=500, le=100000)
     memory_context_token_budget: int = Field(default=380, ge=80, le=2000)
     memory_context_max_items: int = Field(default=6, ge=1, le=12)
+    self_life_continuation_probability: float = Field(default=.60, ge=0, le=1)
+    self_life_context_max_items: int = Field(default=8, ge=1, le=16)
+    self_life_context_token_budget: int = Field(default=450, ge=80, le=2000)
     database_url: str = "sqlite:///data/companion.db"
     debounce_seconds: float = 2.0
     message_split_enabled: bool = True

@@ -5,13 +5,14 @@ from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTi
 log = logging.getLogger(__name__)
 
 class ConversationManager:
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv"):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
         self.presence = presence
         self.memory_extractor = memory_extractor
         self.memory_manager = memory_manager
+        self.self_life, self.timezone_name = self_life, timezone_name
         self.initiative_scheduler = None
         self.generations: dict[int, str] = {}
         # Incremented at arrival time, before any await. It closes the small
@@ -149,12 +150,18 @@ class ConversationManager:
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before context build generation=%s", generation)
             return generation
+        life_state = await self.presence.state(chat_id) if self.presence else None
+        self_life_gate_open = bool(self.self_life and (not life_state or life_state.get("availability") != "sleep") and self.self_life.continuation_gate())
+        log.info("self_life_gate_%s chat_id=%s", "open" if self_life_gate_open else "closed", chat_id)
         build_with_breakdown = getattr(self.context, "build_with_breakdown", None)
         if build_with_breakdown:
+            context_kwargs = {"delay_event": delay_event} if delay_event is not None else {}
+            if self.self_life:
+                context_kwargs.update(self_life_gate_open=self_life_gate_open, life_state=life_state)
             if delay_event is not None:
-                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text, delay_event=delay_event)
+                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text, **context_kwargs)
             else:
-                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text)
+                system, context, breakdown = await build_with_breakdown(user_id, chat_id, text, **context_kwargs)
         else:
             # Compatibility for narrow test/dummy contexts; production uses
             # ContextBuilder and always emits numeric breakdown telemetry.
@@ -170,12 +177,14 @@ class ConversationManager:
             user_content=user_content or [], telemetry={**breakdown, "generation_id": generation},
         )))
         self.requests[chat_id] = task
+        provider_failed = False
         try: response = await task
         except asyncio.CancelledError:
             return generation
         except Exception:
             log.exception("LLM generation failed")
             response = LLMResponse(actions=[Action(type=ActionType.text, text="бля, у меня что-то подвисло. попробуй ещё раз через минуту")])
+            provider_failed = True
         finally:
             if self.requests.get(chat_id) is task:
                 self.requests.pop(chat_id, None)
@@ -186,6 +195,20 @@ class ConversationManager:
         response.actions = await self._validate_action_targets(chat_id, response.actions, target_message_id)
         if self.splitter:
             response.actions = self.splitter.split_actions(response.actions)
+        continuation = response.spontaneous_continuation
+        has_normal_reply = bool(response.actions) and not all(action.type == ActionType.silence for action in response.actions)
+        if self_life_gate_open and not provider_failed and has_normal_reply and continuation.send and continuation.text.strip():
+            response.actions.append(Action(type=ActionType.text, text=continuation.text.strip()))
+            log.info("self_life_continuation_sent chat_id=%s", chat_id)
+            if continuation.event_candidate and self.generations.get(chat_id) == generation:
+                try:
+                    await self.self_life.apply(
+                        continuation.event_candidate, source_chat_id=chat_id, source_turn_id=turn_id,
+                        allowed_target_ids=set(breakdown.get("retrieved_life_event_ids", [])),
+                        local_day=self.self_life.local_day(self.timezone_name),
+                    )
+                except Exception:
+                    log.exception("self_life_persistence_failed chat_id=%s generation=%s", chat_id, generation)
         if self.personality:
             await self.personality.apply(response.self_updates, turn_id)
         if self.emotional_state:

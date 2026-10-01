@@ -1,5 +1,7 @@
 import json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.conversation.tokens import component_size, estimate_tokens
 from app.llm.prompts import read_prompt, response_rules
@@ -14,7 +16,9 @@ class ContextBuilder:
                  recent_media_hours: int = 24, recent_max_messages: int = 24,
                  recent_token_budget: int = 1500, target_input_tokens: int = 5600,
                  memory_retrieval=None, memory_token_budget: int = 380,
-                 memory_max_items: int = 6):
+                 memory_max_items: int = 6, self_life=None,
+                 self_life_token_budget: int = 450, self_life_max_items: int = 8,
+                 timezone_name: str = "Europe/Kyiv"):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.recent_max_messages = recent_max_messages
@@ -23,6 +27,10 @@ class ContextBuilder:
         self.memory_retrieval = memory_retrieval
         self.memory_token_budget = memory_token_budget
         self.memory_max_items = memory_max_items
+        self.self_life = self_life
+        self.self_life_token_budget = self_life_token_budget
+        self.self_life_max_items = self_life_max_items
+        self.timezone_name = timezone_name
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -82,7 +90,8 @@ class ContextBuilder:
         system, context, _ = await self.build_with_breakdown(user_id, chat_id, user_turn, delay_event=delay_event)
         return system, context
 
-    async def build_with_breakdown(self, user_id, chat_id, user_turn, delay_event=None):
+    async def build_with_breakdown(self, user_id, chat_id, user_turn, delay_event=None,
+                                   self_life_gate_open: bool = False, life_state=None):
         messages = await self.db.recent_messages(chat_id, limit=self.recent_max_messages, recent_media_hours=self.recent_media_hours)
         selected_history = self._select_history([self._render(row) for row in messages])
         history = "\n".join(selected_history)
@@ -102,13 +111,49 @@ class ContextBuilder:
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),
-            "relevant_memories": component_size(""),
+            "relevant_memories": component_size(""), "anya_life_events": component_size(""),
+            "current_life_state": component_size(""),
             "delay_event_context": component_size(""),
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
             "request_wrapper": component_size("\n\nUSER TURN:\n"),
         }
         blocks = []
         retrieved_memory_ids: list[int] = []
+        retrieved_life_event_ids: list[int] = []
+        local = datetime.now(ZoneInfo(self.timezone_name))
+        if self.self_life:
+            try:
+                events = await self.self_life.relevant(user_turn, local.date().isoformat(), self.self_life_max_items)
+                rendered, used = [], []
+                for row in events:
+                    line = f"[id={row['id']}] {row['local_day'] or 'recent'}: {row['summary']}"
+                    if row["details"]:
+                        line += f" — {row['details']}"
+                    if estimate_tokens("\n".join([*rendered, line])) > self.self_life_token_budget:
+                        continue
+                    rendered.append(line); used.append(row["id"])
+                if rendered:
+                    block = (
+                        "RECENT / RELEVANT ANYA LIFE EVENTS\n" + "\n".join(rendered)
+                        + "\nThese are your own established experiences, not user facts. Do not contradict them or mention ids."
+                    )
+                    blocks.append(block); retrieved_life_event_ids = used
+                    components["anya_life_events"] = component_size(block)
+            except Exception:
+                log.exception("self_life_retrieval_failed")
+        if life_state:
+            event = life_state.get("event")
+            event_text = "none"
+            if event:
+                event_text = event["title"] if event["mentionable"] else "private"
+            block = (
+                "CURRENT ANYA LIFE STATE\n"
+                f"local_time={local.strftime('%Y-%m-%d %H:%M')}; phase={life_state.get('phase', 'free')}; "
+                f"availability={life_state.get('availability', 'available')}; active_event={event_text}; "
+                f"event_mentionable={'true' if event and event['mentionable'] else 'false'}; "
+                f"continuation_gate={'open' if self_life_gate_open else 'closed'}"
+            )
+            blocks.append(block); components["current_life_state"] = component_size(block)
         if self.memory_retrieval:
             try:
                 memories = await self.memory_retrieval.search(user_id, chat_id, user_turn, self.memory_max_items)
@@ -161,6 +206,7 @@ class ContextBuilder:
             "history_token_budget": self.recent_token_budget, "history_max_messages": self.recent_max_messages,
             "memory_token_budget": self.memory_token_budget, "memory_max_items": self.memory_max_items,
             "retrieved_memory_ids": retrieved_memory_ids,
+            "retrieved_life_event_ids": retrieved_life_event_ids,
             "target_input_tokens": self.target_input_tokens, "components": components,
             "estimated_input_tokens": sum(part["tokens"] for part in components.values()),
         }

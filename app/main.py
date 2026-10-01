@@ -29,6 +29,7 @@ from app.images import DisabledImageGenerationProvider, OpenAIImageProvider, Ope
 from app.memory.extractor import MemoryExtractor
 from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
+from app.self_life import SelfLifeManager
 
 
 def make_provider(settings):
@@ -60,6 +61,7 @@ async def main():
     personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
+    self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
         s.college_normal_delay_multiplier, s.college_active_delay_cap_seconds,
         s.active_reply_min_seconds, s.active_reply_max_seconds,
@@ -72,14 +74,19 @@ async def main():
                              target_input_tokens=s.context_target_input_tokens,
                              memory_retrieval=memory_retrieval,
                              memory_token_budget=s.memory_context_token_budget,
-                             memory_max_items=s.memory_context_max_items)
+                             memory_max_items=s.memory_context_max_items,
+                             self_life=self_life,
+                             self_life_token_budget=s.self_life_context_token_budget,
+                             self_life_max_items=s.self_life_context_max_items,
+                             timezone_name=s.timezone)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,
         s.college_start_hour, s.college_end_hour, s.college_weekdays,
     )
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
-                                  media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager)
+                                  media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
+                                  self_life=self_life, timezone_name=s.timezone)
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
 
     async def on_messages_read(record):

@@ -1,5 +1,5 @@
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.actions.models import Action
 
 
@@ -12,6 +12,38 @@ class MemoryCandidate(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=8)
     # UPDATE_EXISTING is valid only for an id included in RELEVANT MEMORIES.
     target_memory_id: int | None = Field(default=None, gt=0)
+
+
+class AutobiographicalEventCandidate(BaseModel):
+    """A durable fact from Anya's own life, never user memory."""
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["IGNORE", "SAVE", "UPDATE_EXISTING"] = "IGNORE"
+    summary: str = Field(default="", max_length=600)
+    details: str | None = Field(default=None, max_length=1200)
+    kind: str = Field(default="ordinary", max_length=80)
+    occurred_at_hint: str | None = Field(default=None, max_length=120)
+    participants: list[str] = Field(default_factory=list, max_length=8)
+    target_event_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def require_summary_for_saved_event(self):
+        if self.decision != "IGNORE" and not self.summary.strip():
+            raise ValueError("saved autobiographical event requires summary")
+        return self
+
+
+class SpontaneousContinuation(BaseModel):
+    """At most one backend-gated extra Telegram message per user turn."""
+    model_config = ConfigDict(extra="forbid")
+    send: bool = False
+    text: str = Field(default="", max_length=800)
+    event_candidate: AutobiographicalEventCandidate | None = None
+
+    @model_validator(mode="after")
+    def require_text_when_sent(self):
+        if self.send and not self.text.strip():
+            raise ValueError("sent continuation requires text")
+        return self
 
 
 class StateUpdate(BaseModel):
@@ -129,6 +161,7 @@ class LLMResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     actions: list[Action] = Field(default_factory=list, max_length=12)
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)
+    spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
     response_timing: ResponseTiming = Field(default_factory=ResponseTiming)
