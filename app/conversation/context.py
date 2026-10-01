@@ -18,7 +18,8 @@ class ContextBuilder:
                  memory_retrieval=None, memory_token_budget: int = 380,
                  memory_max_items: int = 6, self_life=None,
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
-                 timezone_name: str = "Europe/Kyiv"):
+                 timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
+                 reaction_tendency: float = .40):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.recent_max_messages = recent_max_messages
@@ -31,6 +32,7 @@ class ContextBuilder:
         self.self_life_token_budget = self_life_token_budget
         self.self_life_max_items = self_life_max_items
         self.timezone_name = timezone_name
+        self.sticker_tendency, self.reaction_tendency = sticker_tendency, reaction_tendency
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -100,14 +102,21 @@ class ContextBuilder:
         life_background = "LIFE BACKGROUND\n" + read_prompt("life_background.md")
         profile = "USER PROFILE\n" + read_prompt("user_profile.md")
         response = response_rules()
+        action_tendencies = (
+            "ACTION TENDENCIES\n"
+            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}. "
+            "These are preferences, not quotas: use stickers/reactions more readily when they are a natural emotional response, "
+            "but never add one mechanically or instead of needed text."
+        )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
-        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + memory_policy + "\n\n" + media_rule
+        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + media_rule
 
         components = {
             "character_prompt": component_size(character), "life_background": component_size(life_background),
             "user_profile": component_size(profile),
             "response_instructions": component_size(response), "memory_policy": component_size(memory_policy),
+            "action_tendencies": component_size(action_tendencies),
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),

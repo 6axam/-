@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.14.1 — Action tendencies and test record
+`unreleased` · 2026-10-01
+
+Стикеры и реакции получили реальные конфигурируемые tendency-настройки, выставленные высокими для текущего runtime; добавлен постоянный журнал карты и времени тестов.
+
 ## v1.14 — Human-like spontaneous initiative
 `43f3120` · 2026-10-01
 

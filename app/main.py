@@ -78,7 +78,8 @@ async def main():
                              self_life=self_life,
                              self_life_token_budget=s.self_life_context_token_budget,
                              self_life_max_items=s.self_life_context_max_items,
-                             timezone_name=s.timezone)
+                             timezone_name=s.timezone, sticker_tendency=s.sticker_tendency,
+                             reaction_tendency=s.reaction_tendency)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,

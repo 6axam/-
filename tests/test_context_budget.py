@@ -120,3 +120,16 @@ async def test_canonical_life_background_is_in_system_prompt_and_telemetry(tmp_p
     # empty-history request into an oversized prompt by itself.
     assert breakdown["estimated_input_tokens"] < 5600
     await db.close()
+
+
+async def test_action_tendencies_reach_conversation_system_prompt(tmp_path):
+    db = await make_db(tmp_path)
+    system, _, breakdown = await ContextBuilder(
+        db, sticker_tendency=.85, reaction_tendency=.70
+    ).build_with_breakdown(1, 10, "привет")
+
+    assert "ACTION TENDENCIES" in system
+    assert "sticker_tendency=0.85" in system
+    assert "reaction_tendency=0.70" in system
+    assert breakdown["components"]["action_tendencies"]["tokens"] > 0
+    await db.close()

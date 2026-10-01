@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     message_split_target_chars: int = 70
     message_split_min_chars: int = 25
     message_split_max_parts: int = 4
+    # Behavioural preference weights for the conversation LLM, not sampling temperature.
+    sticker_tendency: float = Field(default=.55, ge=0, le=1)
+    reaction_tendency: float = Field(default=.40, ge=0, le=1)
     initiative_enabled: bool = True
     initiative_check_interval_minutes: int = 15
     initiative_min_idle_minutes: int = Field(default=30, ge=1, le=1440)
