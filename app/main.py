@@ -87,7 +87,8 @@ async def main():
     )
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
-                                  self_life=self_life, timezone_name=s.timezone)
+                                  self_life=self_life, timezone_name=s.timezone, bedtime_ritual_enabled=s.bedtime_ritual_enabled,
+                                  bedtime_window_minutes=s.bedtime_window_minutes)
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
 
     async def on_messages_read(record):

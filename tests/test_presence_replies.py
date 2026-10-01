@@ -83,6 +83,16 @@ async def test_sleep_overrides_event_until_wake_then_event_returns(tmp_path, mon
     await db.close()
 
 
+def test_bedtime_window_is_only_the_short_interval_before_sleep(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'bedtime.sqlite'}")
+    presence = DailyPresenceManager(db, "UTC", sleep_start=1, wake_hour=7)
+    inside = presence.bedtime_state(datetime(2026, 10, 2, 0, 45, tzinfo=timezone.utc), 20)
+    outside = presence.bedtime_state(datetime(2026, 10, 2, 0, 30, tzinfo=timezone.utc), 20)
+    asleep = presence.bedtime_state(datetime(2026, 10, 2, 1, 5, tzinfo=timezone.utc), 20)
+    assert inside["bedtime_window"] and inside["minutes_until_sleep"] == 15
+    assert not outside["bedtime_window"] and not asleep["bedtime_window"]
+
+
 async def test_invalid_reply_target_is_removed_but_real_target_survives(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'reply.sqlite'}"); await db.connect()
     await db.record_message(chat_id=3, telegram_message_id=10, sender="user", user_id=1, kind="text", text="question")

@@ -93,7 +93,7 @@ class ContextBuilder:
         return system, context
 
     async def build_with_breakdown(self, user_id, chat_id, user_turn, delay_event=None,
-                                   self_life_gate_open: bool = False, life_state=None):
+                                   self_life_gate_open: bool = False, life_state=None, bedtime_state=None):
         messages = await self.db.recent_messages(chat_id, limit=self.recent_max_messages, recent_media_hours=self.recent_media_hours)
         selected_history = self._select_history([self._render(row) for row in messages])
         history = "\n".join(selected_history)
@@ -123,6 +123,7 @@ class ContextBuilder:
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
             "current_life_state": component_size(""),
             "delay_event_context": component_size(""),
+            "bedtime_state": component_size(""),
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
             "request_wrapper": component_size("\n\nUSER TURN:\n"),
         }
@@ -163,6 +164,16 @@ class ContextBuilder:
                 f"continuation_gate={'open' if self_life_gate_open else 'closed'}"
             )
             blocks.append(block); components["current_life_state"] = component_size(block)
+        if bedtime_state and bedtime_state.get("bedtime_window"):
+            block = (
+                "BEDTIME STATE\n"
+                f"local_time={bedtime_state['local_time']}; minutes_until_sleep={bedtime_state['minutes_until_sleep']}; "
+                "bedtime_window=true; sleep_soon=true; "
+                f"already_said_goodnight={'true' if bedtime_state.get('already_said_goodnight') else 'false'}.\n"
+                "If it naturally fits this reply, you may say you are about to sleep or wish good night. "
+                "Do not force a farewell and do not repeat one already said today."
+            )
+            blocks.append(block); components["bedtime_state"] = component_size(block)
         if self.memory_retrieval:
             try:
                 memories = await self.memory_retrieval.search(user_id, chat_id, user_turn, self.memory_max_items)

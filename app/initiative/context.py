@@ -25,7 +25,7 @@ class InitiativeContextBuilder:
                 kept.append(line)
         return kept
 
-    async def build(self, user_id: int, chat_id: int, *, basis: str = "spontaneous", daily_state=None):
+    async def build(self, user_id: int, chat_id: int, *, basis: str = "spontaneous", daily_state=None, bedtime_state=None):
         db, cc = self.conversation_context.db, self.conversation_context
         lifecycle = await self.lifecycle.get(chat_id)
         daily_state = daily_state or (await self.presence.state(chat_id) if self.presence else {"phase": "free", "availability": "available", "event": None})
@@ -38,7 +38,7 @@ class InitiativeContextBuilder:
         history_lines = self._bounded(list(reversed(rendered)), self.recent_history_token_budget)
         history = "\n".join(reversed(history_lines)) or "(none)"
         character = "CORE CHARACTER\n" + read_prompt("character.md") + "\n\nLIFE BACKGROUND\n" + read_prompt("life_background.md") + "\n\n" + read_prompt("initiative.md")
-        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "recent_initiatives": component_size("")}
+        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "bedtime_state": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "recent_initiatives": component_size("")}
         blocks = []
         if cc.personality:
             values = "\n".join(f"- {r['category']} / {r['subject']}: {r['value']}" for r in await cc.personality.relevant(history, limit=6)) or "(none yet)"
@@ -54,6 +54,9 @@ class InitiativeContextBuilder:
         blocks.append(block); components["current_life_state"] = component_size(block)
         block = f"INITIATIVE CONTEXT\nbasis={basis}; status={lifecycle['conversation_status']}; expects_reply={lifecycle['expects_reply']}; followup_importance={lifecycle['followup_importance']:.2f}; followup_reason={lifecycle['followup_reason'] or '(none)'}; user_idle_minutes={int(idle['minutes'] or 0)}; hours_since_last={cooldown['hours'] if cooldown['hours'] is not None else 'never'}; initiatives_today={cooldown['today']}"
         blocks.append(block); components["eligibility_lifecycle"] = component_size(block)
+        if bedtime_state:
+            block = f"BEDTIME STATE\nlocal_time={bedtime_state['local_time']}; minutes_until_sleep={bedtime_state['minutes_until_sleep']}; bedtime_window=true; sleep_soon=true; already_said_goodnight=false. A bedtime initiative, if chosen, is one short natural farewell; do not guilt or demand a reply."
+            blocks.append(block); components["bedtime_state"] = component_size(block)
         if getattr(cc, "memory_retrieval", None):
             memories = await cc.memory_retrieval.search(user_id, chat_id, f"{lifecycle['followup_reason'] or ''} {history}", 4)
             lines = self._bounded([f"[id={r['id']}] {r['content']}" for r in memories[:4]], self.memory_token_budget)

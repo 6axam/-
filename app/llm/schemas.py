@@ -130,7 +130,7 @@ class InitiativeDecision(BaseModel):
     should_message: bool
     reason: str = Field(min_length=1, max_length=300)
     urgency: Literal["urgent", "normal", "low"] = "low"
-    kind: Literal["followup", "self_life", "observation", "question", "tease", "random_thought", "daily_event", "callback"] = "random_thought"
+    kind: Literal["followup", "self_life", "observation", "question", "tease", "random_thought", "daily_event", "callback", "bedtime"] = "random_thought"
     actions: list[Action] = Field(default_factory=list, max_length=8)
     self_life_event_candidate: AutobiographicalEventCandidate | None = None
 

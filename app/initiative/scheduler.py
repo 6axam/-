@@ -33,6 +33,12 @@ class InitiativeScheduler:
         daily_state = await self.presence.state(chat_id) if self.presence else {"availability": "available", "event": None}
         blocked = await self._safety_block(chat_id, daily_state)
         if blocked: return False, blocked, state
+        bedtime = self.presence.bedtime_state(window_minutes=getattr(self.settings, "bedtime_window_minutes", 20)) if self.presence and getattr(self.settings, "bedtime_ritual_enabled", False) else None
+        if bedtime and bedtime["bedtime_window"]:
+            if await self.db.bedtime_done(chat_id, bedtime["local_day"]): return False, "bedtime_already_done", state
+            if self.rng() >= getattr(self.settings, "bedtime_initiative_probability", .65): return False, "bedtime_gate_closed", state
+            state["initiative_basis"], state["daily_state"], state["bedtime_state"] = "bedtime", daily_state, bedtime
+            return True, "bedtime", state
         event = daily_state.get("event")
         semantic = bool(state["expects_reply"] and state["followup_importance"] > 0) or bool(event)
         idle = await self.db.fetchone("SELECT (julianday('now')-julianday(?))*1440 AS minutes", (state["last_meaningful_interaction_at"],))
@@ -61,16 +67,16 @@ class InitiativeScheduler:
             return False
         basis = state["initiative_basis"]
         log.info("initiative_candidate chat_id=%s basis=%s", chat_id, basis)
-        task = asyncio.create_task(self._decide(user_id, chat_id, basis, state["daily_state"]))
+        task = asyncio.create_task(self._decide(user_id, chat_id, basis, state["daily_state"], state.get("bedtime_state")))
         self.tasks[chat_id] = task
         try: return await task
         except asyncio.CancelledError: return False
         finally:
             if self.tasks.get(chat_id) is task: self.tasks.pop(chat_id, None)
 
-    async def _decide(self, user_id: int, chat_id: int, basis="spontaneous", daily_state=None):
+    async def _decide(self, user_id: int, chat_id: int, basis="spontaneous", daily_state=None, bedtime_state=None):
         try:
-            built = await self.context.build(user_id, chat_id, basis=basis, daily_state=daily_state)
+            built = await self.context.build(user_id, chat_id, basis=basis, daily_state=daily_state, bedtime_state=bedtime_state)
         except TypeError:  # narrow legacy/dummy test contexts
             built = await self.context.build(user_id, chat_id)
         system, context, telemetry = (*built, {})[:3] if len(built) == 2 else built
@@ -85,6 +91,8 @@ class InitiativeScheduler:
         sent = await self.manager.enqueue_initiative(chat_id, generation, decision.actions)
         if sent:
             await self.db.execute("INSERT INTO initiative_history(chat_id,reason,basis,kind) VALUES(?,?,?,?)", (chat_id, decision.reason, basis, decision.kind))
+            if basis == "bedtime":
+                await self.db.record_bedtime(chat_id, bedtime_state["local_day"], "initiative")
             candidate = decision.self_life_event_candidate
             if candidate and getattr(self.context.conversation_context, "self_life", None):
                 ids = set(telemetry.get("retrieved_life_event_ids", []))

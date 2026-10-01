@@ -276,6 +276,18 @@ MIGRATIONS = [
     ALTER TABLE initiative_history ADD COLUMN kind TEXT;
     CREATE INDEX IF NOT EXISTS idx_initiative_chat_recent_kind ON initiative_history(chat_id, created_at DESC, id DESC);
     """,
+    """
+    -- At most one bedtime farewell per chat and local calendar day.  It is
+    -- deliberately independent from initiative history so a natural reply
+    -- can complete the ritual without a separate initiative.
+    CREATE TABLE IF NOT EXISTS bedtime_history (
+        chat_id INTEGER NOT NULL,
+        local_day TEXT NOT NULL,
+        source TEXT NOT NULL CHECK(source IN ('conversation','initiative')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(chat_id, local_day)
+    );
+    """,
 ]
 
 
@@ -484,6 +496,12 @@ class Database:
             "SELECT 1 FROM scheduled_reads WHERE chat_id=? AND status IN ('pending','processing') LIMIT 1",
             (chat_id,),
         ))
+
+    async def bedtime_done(self, chat_id: int, local_day: str) -> bool:
+        return bool(await self.fetchone("SELECT 1 FROM bedtime_history WHERE chat_id=? AND local_day=?", (chat_id, local_day)))
+
+    async def record_bedtime(self, chat_id: int, local_day: str, source: str) -> None:
+        await self.execute("INSERT OR IGNORE INTO bedtime_history(chat_id,local_day,source) VALUES(?,?,?)", (chat_id, local_day, source))
 
     async def import_sticker_pack(self, *, name: str, title: str, stickers: list[tuple[str, str, str, str]], current_unique_id: str | None) -> int:
         """One SQLite transaction for a whole pack; returns number of newly queued jobs."""

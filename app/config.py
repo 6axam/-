@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Kyiv"
     sleep_start_hour: int = 1
     wake_hour: int = 7
+    bedtime_ritual_enabled: bool = True
+    bedtime_window_minutes: int = Field(default=20, ge=1, le=120)
+    bedtime_initiative_probability: float = Field(default=.65, ge=0, le=1)
     college_start_hour: int = Field(default=8, ge=0, le=23)
     college_end_hour: int = Field(default=15, ge=0, le=23)
     college_weekdays: Annotated[tuple[int, ...], NoDecode] = (0, 1, 2, 3, 4)

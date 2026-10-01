@@ -133,3 +133,13 @@ async def test_action_tendencies_reach_conversation_system_prompt(tmp_path):
     assert "reaction_tendency=0.70" in system
     assert breakdown["components"]["action_tendencies"]["tokens"] > 0
     await db.close()
+
+
+async def test_bedtime_state_is_compact_optional_context(tmp_path):
+    db = await make_db(tmp_path)
+    _system, context, breakdown = await ContextBuilder(db).build_with_breakdown(
+        1, 10, "привет", bedtime_state={"bedtime_window": True, "local_time": "2026-10-01 00:45", "minutes_until_sleep": 15, "already_said_goodnight": False}
+    )
+    assert "BEDTIME STATE" in context and "minutes_until_sleep=15" in context
+    assert breakdown["components"]["bedtime_state"]["tokens"] > 0
+    await db.close()

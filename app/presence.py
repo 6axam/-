@@ -86,6 +86,18 @@ class DailyPresenceManager:
     async def is_sleeping(self, chat_id: int) -> bool:
         return (await self.state(chat_id))["availability"] == "sleep"
 
+    def bedtime_state(self, now: datetime | None = None, window_minutes: int = 20) -> dict:
+        """Compact, deterministic state for the short window before sleep."""
+        now = (now or datetime.now(timezone.utc)).astimezone(self.zone)
+        start = datetime.combine(now.date(), time(self.sleep_start), tzinfo=self.zone)
+        if now >= start:
+            start += timedelta(days=1)
+        minutes = max(0, int((start - now).total_seconds() // 60))
+        return {"bedtime_window": 0 < (start - now).total_seconds() <= window_minutes * 60,
+                "sleep_soon": 0 < (start - now).total_seconds() <= window_minutes * 60,
+                "minutes_until_sleep": minutes, "local_time": now.strftime("%Y-%m-%d %H:%M"),
+                "local_day": now.date().isoformat()}
+
     @staticmethod
     def allows_delayed_reply(state: dict) -> bool:
         """Free afternoon/evening replies should not gain invented excuses."""

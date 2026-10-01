@@ -188,3 +188,22 @@ async def test_new_message_during_initiative_llm_call_cancels_delivery(tmp_path)
     assert not await scheduler._decide(1, 10, "spontaneous")
     assert manager.sent == []
     await db.close()
+
+
+async def test_bedtime_candidate_uses_its_own_gate_and_persists_once_per_day(tmp_path):
+    db, _scheduler, provider, manager = await prepared_scheduler(
+        tmp_path, InitiativeDecision(should_message=True, reason="sleep", kind="bedtime", actions=[Action(type=ActionType.text, text="бб")])
+    )
+    class BedtimePresence:
+        async def state(self, _chat): return {"availability": "available", "phase": "free", "event": None}
+        def bedtime_state(self, **_kwargs): return {"bedtime_window": True, "local_day": "2026-10-01", "local_time": "2026-10-01 00:45", "minutes_until_sleep": 15}
+    scheduler = InitiativeScheduler(
+        db, manager, ConversationLifecycleManager(db, 30, 12), ResponseScheduler(), InitiativeContext(),
+        settings(bedtime_ritual_enabled=True, bedtime_window_minutes=20, bedtime_initiative_probability=.65), presence=BedtimePresence(), rng=lambda: 0,
+    )
+    assert await scheduler.check_chat(1, 10)
+    assert provider.calls == 1
+    assert await db.bedtime_done(10, "2026-10-01")
+    assert not await scheduler.check_chat(1, 10)
+    assert provider.calls == 1
+    await db.close()

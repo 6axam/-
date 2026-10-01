@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.15 — Bedtime ritual
+`unreleased` · 2026-10-01
+
+Перед сном Аня получает compact bedtime context в обычном ответе, а idle-chat может один раз за local day пройти через Initiative v2 с отдельным gate и persistent защитой от повторов.
+
 ## v1.14.2 — Natural image posing
 `3630923` · 2026-10-01
 
