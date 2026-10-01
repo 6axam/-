@@ -10,6 +10,10 @@ class VoiceGenerationResult:
     cost: float | None = None
 
 
+class VoiceProviderError(RuntimeError):
+    """A controlled failure from a voice-generation backend."""
+
+
 class VoiceProvider(ABC):
     name = "disabled"
     enabled = True

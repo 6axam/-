@@ -1,7 +1,12 @@
 # Changelog
 
-## v1.17.2 — Direct voice capability exposure
+## v1.18 — OpenRouter Seed Audio delivery
 `unreleased` · 2026-10-01
+
+Outgoing voice messages now use OpenRouter’s confirmed Seed Audio contract with a cached local reference clip and raw MP3 delivery to Telegram. The obsolete direct BytePlus transport and its OGG-only settings were removed; an OpenRouter `LLM_API_KEY` can serve as the voice-key fallback.
+
+## v1.17.2 — Direct voice capability exposure
+`531d116` · 2026-10-01
 
 Когда voice runtime доступен, system prompt теперь явно подтверждает реальную Telegram voice-возможность и при прямой просьбе ставит `voice_message` выше tendency; startup логирует состояние без секретов.
 

@@ -1,4 +1,4 @@
-from .provider import DisabledVoiceProvider, VoiceGenerationResult, VoiceProvider
-from .byteplus_seed import BytePlusSeedAudioProvider, VoiceProviderError
+from .provider import DisabledVoiceProvider, VoiceGenerationResult, VoiceProvider, VoiceProviderError
+from .openrouter_seed import OpenRouterSeedAudioProvider
 
-__all__ = ["BytePlusSeedAudioProvider", "DisabledVoiceProvider", "VoiceGenerationResult", "VoiceProvider", "VoiceProviderError"]
+__all__ = ["DisabledVoiceProvider", "OpenRouterSeedAudioProvider", "VoiceGenerationResult", "VoiceProvider", "VoiceProviderError"]

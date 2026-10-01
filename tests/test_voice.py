@@ -6,10 +6,11 @@ from pydantic import ValidationError
 from app.actions.models import Action, ActionType, QueuedAction, VoiceIntent
 from app.actions.queue import ActionQueue
 from app.conversation.context import ContextBuilder
+from app.config import Settings
 from app.database.db import Database
+from app.main import make_voice_provider
 from app.telegram.executor import TelegramActionExecutor
-from app.voice import DisabledVoiceProvider, VoiceGenerationResult, VoiceProvider
-from app.voice.byteplus_seed import BytePlusSeedAudioProvider, VoiceProviderError
+from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider, VoiceGenerationResult, VoiceProvider, VoiceProviderError
 import base64
 import httpx
 import json
@@ -40,7 +41,7 @@ class FakeVoiceProvider(VoiceProvider):
     def __init__(self): self.calls = []
     async def generate(self, text, *, mood=None, pace=None, energy=.5):
         self.calls.append((text, mood, pace, energy))
-        return VoiceGenerationResult(b"ogg-bytes", "audio/ogg")
+        return VoiceGenerationResult(b"mp3-bytes", "audio/mpeg")
 
 
 class VoiceBot:
@@ -63,7 +64,7 @@ async def test_voice_executor_sends_persists_and_updates_lifecycle(tmp_path):
     action = Action(type=ActionType.voice_message, voice_intent=VoiceIntent(text="ну я почти сплю уже", mood="sleepy", pace="slow", energy=.2))
     await executor.execute(QueuedAction(chat_id=10, generation_id="g", action=action))
     assert provider.calls == [("ну я почти сплю уже", "sleepy", "slow", .2)]
-    assert bot.sent == [(10, b"ogg-bytes", "anya.ogg")]
+    assert bot.sent == [(10, b"mp3-bytes", "anya.mp3")]
     row = await db.fetchone("SELECT sender,type,text FROM messages WHERE chat_id=10")
     assert dict(row) == {"sender": "assistant", "type": "voice", "text": "ну я почти сплю уже"}
     assert lifecycle.calls == [10]
@@ -92,22 +93,62 @@ async def test_queue_keeps_voice_as_one_action_without_text_cadence_split():
     assert executor.actions == [ActionType.voice_message]
 
 
-async def test_byteplus_provider_builds_request_and_decodes_audio(tmp_path):
+async def test_openrouter_seed_provider_uses_exact_voice_clone_contract(tmp_path, caplog):
     reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
     seen = {}
     async def handler(request):
         seen["headers"], seen["json"] = dict(request.headers), json.loads(request.content)
-        return httpx.Response(200, json={"data": {"audio": base64.b64encode(b"ogg").decode(), "duration": 1.5}})
-    provider = BytePlusSeedAudioProvider("secret-key", "seed-audio-1.0", "https://example.test/create", reference, transport=httpx.MockTransport(handler))
+        return httpx.Response(200, content=b"mp3", headers={"content-type": "audio/mpeg", "x-generation-id": "gen-safe"})
+    provider = OpenRouterSeedAudioProvider("secret-key", "bytedance-seed/seed-audio-1-0", "https://example.test/audio/speech", reference, transport=httpx.MockTransport(handler))
     result = await provider.generate("ну да", mood="sleepy", pace="slow", energy=.2)
-    assert result.data == b"ogg" and result.mime_type == "audio/ogg" and result.duration_seconds == 1.5
-    assert seen["headers"]["x-api-key"] == "secret-key" and seen["headers"]["x-api-request-id"]
-    assert seen["json"]["model"] == "seed-audio-1.0" and "@Audio1" in seen["json"]["text_prompt"]
-    assert seen["json"]["references"][0]["audio_data"] == base64.b64encode(b"reference").decode()
-    assert seen["json"]["audio_config"]["format"] == "ogg_opus" and seen["json"]["audio_config"]["sample_rate"] == 48000
+    assert result == VoiceGenerationResult(b"mp3", "audio/mpeg", None)
+    assert seen["headers"]["authorization"] == "Bearer secret-key"
+    assert seen["headers"]["content-type"] == "application/json"
+    assert seen["json"] == {
+        "model": "bytedance-seed/seed-audio-1-0",
+        "input": "ну да",
+        "response_format": "mp3",
+        "reference_audio": base64.b64encode(b"reference").decode(),
+    }
+    assert "references" not in seen["json"] and "audio_config" not in seen["json"]
+    assert "voice" not in seen["json"] and "data:" not in seen["json"]["reference_audio"]
+    assert "secret-key" not in caplog.text
+    assert seen["json"]["reference_audio"] not in caplog.text
+    assert "ну да" not in caplog.text
 
 
-async def test_byteplus_malformed_response_is_controlled(tmp_path):
+async def test_openrouter_seed_reference_is_cached(tmp_path):
     reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
-    provider = BytePlusSeedAudioProvider("key", "seed-audio-1.0", "https://example.test/create", reference, transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": {}})))
-    with pytest.raises(VoiceProviderError): await provider.generate("ну да")
+    provider = OpenRouterSeedAudioProvider("key", "model", "https://example.test/audio/speech", reference, transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"mp3", headers={"content-type": "audio/mpeg"})))
+    await provider.generate("one")
+    reference.unlink()
+    await provider.generate("two")
+
+
+@pytest.mark.parametrize("response", [
+    httpx.Response(400, json={"error": {"type": "invalid_request", "message": "bad"}}),
+    httpx.Response(502, text="upstream unavailable"),
+])
+async def test_openrouter_seed_errors_are_controlled(tmp_path, response):
+    reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
+    provider = OpenRouterSeedAudioProvider("key", "model", "https://example.test/audio/speech", reference, transport=httpx.MockTransport(lambda request: response))
+    with pytest.raises(VoiceProviderError):
+        await provider.generate("ну да")
+
+
+def test_voice_config_prefers_explicit_key_and_falls_back_to_openrouter_llm_key(tmp_path):
+    reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
+    shared = dict(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_provider="openrouter", llm_api_key="llm-key", voice_generation_enabled=True, voice_provider="openrouter_seed", anya_voice_reference=str(reference))
+    fallback = make_voice_provider(Settings(**shared))
+    assert isinstance(fallback, OpenRouterSeedAudioProvider) and fallback.api_key == "llm-key"
+    explicit = make_voice_provider(Settings(**shared, voice_api_key="voice-key"))
+    assert explicit.api_key == "voice-key"
+
+
+def test_voice_config_fails_without_openrouter_key_or_with_wrong_provider(tmp_path):
+    reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
+    common = dict(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="", voice_generation_enabled=True, anya_voice_reference=str(reference))
+    with pytest.raises(ValidationError):
+        Settings(**common, llm_provider="openrouter", voice_provider="openrouter_seed")
+    with pytest.raises(ValidationError):
+        Settings(**common, llm_provider="openai", voice_provider="byteplus_seed", voice_api_key="voice-key")

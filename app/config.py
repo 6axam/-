@@ -35,13 +35,12 @@ class Settings(BaseSettings):
     reaction_tendency: float = Field(default=.40, ge=0, le=1)
     voice_message_tendency: float = Field(default=.20, ge=0, le=1)
     voice_generation_enabled: bool = False
-    voice_provider: str = "byteplus_seed"
+    voice_provider: str = "openrouter_seed"
     voice_api_key: str | None = None
-    voice_model: str = "seed-audio-1.0"
-    voice_base_url: str = "https://voice.ap-southeast-1.bytepluses.com/api/v3/tts/create"
+    voice_model: str = "bytedance-seed/seed-audio-1-0"
+    voice_base_url: str = "https://openrouter.ai/api/v1/audio/speech"
     anya_voice_reference: str = "assets/anya/voice_reference.wav"
-    voice_output_format: str = "ogg_opus"
-    voice_sample_rate: int = Field(default=48000, ge=8000, le=48000)
+    voice_output_format: str = "mp3"
     voice_request_timeout_seconds: float = Field(default=120, ge=10, le=300)
     initiative_enabled: bool = True
     initiative_check_interval_minutes: int = 15
@@ -160,10 +159,10 @@ class Settings(BaseSettings):
     def valid_voice_configuration(self):
         if not self.voice_generation_enabled:
             return self
-        if self.voice_provider != "byteplus_seed":
-            raise ValueError("VOICE_PROVIDER must be 'byteplus_seed'")
-        if not self.voice_api_key:
-            raise ValueError("VOICE_API_KEY is required when VOICE_GENERATION_ENABLED=true")
+        if self.voice_provider != "openrouter_seed":
+            raise ValueError("VOICE_PROVIDER must be 'openrouter_seed'")
+        if not self.voice_api_key and (self.llm_provider != "openrouter" or not self.llm_api_key):
+            raise ValueError("VOICE_API_KEY is required unless LLM_PROVIDER=openrouter with LLM_API_KEY set")
         path = Path(self.anya_voice_reference)
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError("ANYA_VOICE_REFERENCE must be an existing non-empty file when voice generation is enabled")
@@ -171,8 +170,8 @@ class Settings(BaseSettings):
             raise ValueError("ANYA_VOICE_REFERENCE must be .wav, .mp3, .ogg, or .opus")
         if path.stat().st_size > 10 * 1024 * 1024:
             raise ValueError("ANYA_VOICE_REFERENCE must be 10 MB or smaller")
-        if self.voice_output_format != "ogg_opus" or self.voice_sample_rate != 48000:
-            raise ValueError("Seed Audio Telegram voice output must use ogg_opus at 48000 Hz")
+        if self.voice_output_format != "mp3":
+            raise ValueError("OpenRouter Seed Audio output must use mp3")
         return self
 
 

@@ -31,7 +31,7 @@ from app.memory.extractor import MemoryExtractor
 from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
 from app.self_life import SelfLifeManager
-from app.voice import BytePlusSeedAudioProvider, DisabledVoiceProvider
+from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 
 
 def make_provider(settings):
@@ -47,9 +47,14 @@ def make_embeddings(settings):
 def make_voice_provider(settings):
     if not settings.voice_generation_enabled:
         return DisabledVoiceProvider()
-    return BytePlusSeedAudioProvider(settings.voice_api_key, settings.voice_model, settings.voice_base_url, settings.anya_voice_reference,
-                                     output_format=settings.voice_output_format, sample_rate=settings.voice_sample_rate,
-                                     timeout_seconds=settings.voice_request_timeout_seconds)
+    api_key = settings.voice_api_key or settings.llm_api_key
+    return OpenRouterSeedAudioProvider(
+        api_key,
+        settings.voice_model,
+        settings.voice_base_url,
+        settings.anya_voice_reference,
+        timeout_seconds=settings.voice_request_timeout_seconds,
+    )
 
 async def main():
     logging.basicConfig(level=logging.INFO)
