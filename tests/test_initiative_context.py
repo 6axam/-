@@ -9,6 +9,7 @@ from app.initiative.context import InitiativeContextBuilder
 from app.initiative.scheduler import InitiativeScheduler
 from app.llm.openai_provider import INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION
 from app.llm.schemas import InitiativeDecision
+from app.self_life import SelfLifeManager
 
 
 async def make_runtime(tmp_path):
@@ -41,7 +42,9 @@ async def test_initiative_context_includes_character_emotion_and_compact_recent_
     assert "жду результат прошивки" in context
     assert "USER PROFILE" not in system + context
     assert "RECENT IMAGES YOU SENT" not in context
-    assert estimate_tokens(system + "\n" + INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION + context) <= 3500
+    # Full core character plus canonical life background is intentionally kept;
+    # this compact initiative request must still avoid the full conversation payload.
+    assert estimate_tokens(system + "\n" + INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION + context) <= 4000
     assert breakdown["history_messages"] == 1
     await db.close()
 
@@ -89,4 +92,27 @@ async def test_scheduler_passes_compact_character_context_to_initiative_provider
     assert "EMOTIONAL STATE" in provider.request.context
     assert provider.request.telemetry["kind"] == "initiative"
     assert provider.request.telemetry["target_input_tokens"] == 3500
+    await db.close()
+
+
+async def test_private_daily_event_title_is_not_in_initiative_context(tmp_path):
+    db, _personality, _emotions, lifecycle, builder = await make_runtime(tmp_path)
+    await add_message(db, 10, 1, "привет")
+    await lifecycle.on_user_message(10)
+    event = {"title": "PRIVATE_SHOWER", "availability": "busy", "mentionable": 0}
+    _system, context, _ = await builder.build(1, 10, daily_state={"phase": "free", "availability": "busy", "event": event})
+    assert "PRIVATE_SHOWER" not in context
+    assert "mentionable=false" in context
+    await db.close()
+
+
+async def test_initiative_context_retrieves_global_anya_life_events(tmp_path):
+    db, _personality, _emotions, lifecycle, builder = await make_runtime(tmp_path)
+    builder.conversation_context.self_life = SelfLifeManager(db)
+    await db.execute("INSERT INTO anya_life_events(local_day,kind,summary) VALUES(date('now'),'college','переделывала макет для пары')")
+    await add_message(db, 10, 1, "как там макет")
+    await lifecycle.on_user_message(10)
+    _system, context, telemetry = await builder.build(1, 10)
+    assert "переделывала макет" in context
+    assert telemetry["retrieved_life_event_ids"]
     await db.close()

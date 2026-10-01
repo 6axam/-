@@ -31,9 +31,11 @@ class Settings(BaseSettings):
     message_split_max_parts: int = 4
     initiative_enabled: bool = True
     initiative_check_interval_minutes: int = 15
-    initiative_min_idle_minutes: int = 45
-    initiative_cooldown_hours: int = 4
-    initiative_max_per_day: int = 3
+    initiative_min_idle_minutes: int = Field(default=30, ge=1, le=1440)
+    initiative_spontaneous_min_idle_minutes: int = Field(default=60, ge=1, le=10080)
+    initiative_spontaneous_probability: float = Field(default=.55, ge=0, le=1)
+    initiative_cooldown_hours: float = Field(default=3, ge=0, le=168)
+    initiative_max_per_day: int = Field(default=4, ge=0, le=24)
     initiative_max_unanswered: int = 1
     conversation_cooling_minutes: int = 30
     conversation_ended_hours: int = 12

@@ -68,7 +68,7 @@ class ResponseScheduler:
         return bool(row)
 
     async def has_pending(self, chat_id: int) -> bool:
-        return bool(await self.db.fetchone("SELECT 1 FROM scheduled_responses WHERE chat_id=? AND status='pending'", (chat_id,)))
+        return bool(await self.db.fetchone("SELECT 1 FROM scheduled_responses WHERE chat_id=? AND status IN ('pending','processing')", (chat_id,)))
 
     async def due(self):
         return await self.db.fetchall("SELECT * FROM scheduled_responses WHERE status='pending' AND julianday(respond_after) <= julianday('now') ORDER BY respond_after")

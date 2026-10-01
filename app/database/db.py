@@ -269,6 +269,13 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_anya_life_events_recent ON anya_life_events(occurred_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_anya_life_events_day ON anya_life_events(local_day, id DESC);
     """,
+    """
+    -- Initiative v2 records whether a message was a follow-up or a genuine
+    -- spontaneous first message, and its broad conversational form.
+    ALTER TABLE initiative_history ADD COLUMN basis TEXT;
+    ALTER TABLE initiative_history ADD COLUMN kind TEXT;
+    CREATE INDEX IF NOT EXISTS idx_initiative_chat_recent_kind ON initiative_history(chat_id, created_at DESC, id DESC);
+    """,
 ]
 
 
@@ -464,6 +471,18 @@ class Database:
             "SELECT 1 FROM messages WHERE chat_id=? AND sender='user' AND internally_read_at IS NULL "
             "AND telegram_message_id>? LIMIT 1",
             (chat_id, boundary_message_id),
+        ))
+
+    async def has_unread_user_messages(self, chat_id: int) -> bool:
+        return bool(await self.fetchone(
+            "SELECT 1 FROM messages WHERE chat_id=? AND sender='user' AND internally_read_at IS NULL LIMIT 1",
+            (chat_id,),
+        ))
+
+    async def has_active_scheduled_read(self, chat_id: int) -> bool:
+        return bool(await self.fetchone(
+            "SELECT 1 FROM scheduled_reads WHERE chat_id=? AND status IN ('pending','processing') LIMIT 1",
+            (chat_id,),
         ))
 
     async def import_sticker_pack(self, *, name: str, title: str, stickers: list[tuple[str, str, str, str]], current_unique_id: str | None) -> int:

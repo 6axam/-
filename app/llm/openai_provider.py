@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 JSON_OBJECT_FORMAT = {"type": "json_object"}
 REPAIR_PROMPT = "Return only valid JSON matching this schema. Do not add markdown. Schema: " + json.dumps(LLMResponse.model_json_schema(), ensure_ascii=False)
 PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION = "Return JSON matching the structured response schema supplied via response_format. Do not add markdown."
-INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION = "Decide only whether Anya should write first now. Use the supplied structured response schema. Do not message merely because time passed; never guilt, pressure, or ask why the user is absent. Mention a current daily event only when context says it is mentionable. About 40–50% of initiative messages may be impulsive, odd, provocative, or lightly conflictual without a useful pretext: tease Maksim, challenge a small thing, make an absurd/suspicious observation or a mock complaint, or send one short strange line just for a reaction. Make this feel spontaneous, not like a manufactured scandal; vary it, do not explain why you wrote, and never use cruelty, humiliation, emotional blackmail, or repeated templates. The remaining initiatives should be ordinary thoughts, events, questions, or natural continuations of a topic."
+INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION = "Decide only whether Anya should write first now. Use the supplied structured response schema. Follow the initiative policy in system context. Never guilt, pressure, or ask why the user is absent. Mention a current daily event title only when context marks it mentionable."
 
 
 def _strict_schema_from(model) -> dict:

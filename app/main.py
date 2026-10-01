@@ -134,7 +134,7 @@ async def main():
         user_id = messages[-1].from_user.id
         await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages))
     buffer = IncomingBuffer(s.debounce_seconds,flush)
-    initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle), s, buffer)
+    initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
     manager.initiative_scheduler = initiative
     worker = StickerAnalysisWorker(db, bot, stickers, provider, s)
     daily_life = DailyLifeScheduler(db, provider, presence, s)

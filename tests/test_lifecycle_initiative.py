@@ -82,7 +82,7 @@ class InitiativeContext:
 
 
 def settings(**overrides):
-    values = dict(initiative_min_idle_minutes=45, initiative_cooldown_hours=4, initiative_max_per_day=3, initiative_max_unanswered=1, initiative_enabled=True, initiative_check_interval_minutes=15)
+    values = dict(initiative_min_idle_minutes=45, initiative_spontaneous_min_idle_minutes=60, initiative_spontaneous_probability=.55, initiative_cooldown_hours=4, initiative_max_per_day=3, initiative_max_unanswered=1, initiative_enabled=True, initiative_check_interval_minutes=15)
     values.update(overrides)
     return SimpleNamespace(**values)
 
@@ -95,6 +95,7 @@ async def prepared_scheduler(tmp_path, decision):
     await lifecycle.on_user_message(10)
     await lifecycle.apply(10, ConversationMetadata(expects_reply=True, followup_importance=.4, followup_reason="flash result"))
     await db.execute("UPDATE conversation_lifecycle SET last_meaningful_interaction_at=datetime('now','-2 hours') WHERE chat_id=10")
+    await db.mark_messages_read(10, [1])
     provider = DecisionProvider(decision)
     manager = InitiativeManager(provider)
     return db, InitiativeScheduler(db, manager, lifecycle, ResponseScheduler(), InitiativeContext(), settings()), provider, manager
@@ -112,15 +113,15 @@ async def test_initiative_eligibility_then_max_unanswered_prevents_spam(tmp_path
     await db.close()
 
 
-async def test_ordinary_absence_without_semantic_followup_skips_llm(tmp_path):
+async def test_ordinary_absence_can_take_spontaneous_path(tmp_path):
     db = await db_for(tmp_path)
     lifecycle = ConversationLifecycleManager(db, 30, 12)
     await lifecycle.on_user_message(10)
     await db.execute("UPDATE conversation_lifecycle SET last_meaningful_interaction_at=datetime('now','-2 days') WHERE chat_id=10")
     provider = DecisionProvider(InitiativeDecision(should_message=True, reason="should not be called"))
-    scheduler = InitiativeScheduler(db, InitiativeManager(provider), lifecycle, ResponseScheduler(), InitiativeContext(), settings())
-    assert not await scheduler.check_chat(1, 10)
-    assert provider.calls == 0
+    scheduler = InitiativeScheduler(db, InitiativeManager(provider), lifecycle, ResponseScheduler(), InitiativeContext(), settings(), rng=lambda: 0)
+    assert await scheduler.check_chat(1, 10)
+    assert provider.calls == 1
     await db.close()
 
 
@@ -146,3 +147,44 @@ async def test_restart_keeps_lifecycle_and_initiative_cooldown(tmp_path):
     state = await lifecycle.get(10)
     assert state["expects_reply"] == 1
     await restarted.close()
+
+
+async def test_unread_message_blocks_initiative_before_llm(tmp_path):
+    db, scheduler, provider, _manager = await prepared_scheduler(
+        tmp_path, InitiativeDecision(should_message=True, reason="x")
+    )
+    await db.record_message(chat_id=10, telegram_message_id=2, user_id=1, sender="user", kind="text", text="UNREAD")
+    assert not await scheduler.check_chat(1, 10)
+    assert provider.calls == 0
+    await db.close()
+
+
+async def test_spontaneous_gate_is_injectable(tmp_path):
+    db = await db_for(tmp_path)
+    lifecycle = ConversationLifecycleManager(db, 30, 12)
+    await lifecycle.on_user_message(10)
+    await db.execute("UPDATE conversation_lifecycle SET last_meaningful_interaction_at=datetime('now','-2 days') WHERE chat_id=10")
+    provider = DecisionProvider(InitiativeDecision(should_message=True, reason="x"))
+    scheduler = InitiativeScheduler(db, InitiativeManager(provider), lifecycle, ResponseScheduler(), InitiativeContext(), settings(initiative_spontaneous_probability=.5), rng=lambda: .9)
+    ok, reason, _state = await scheduler.eligibility(10)
+    assert not ok and reason == "spontaneous_gate_closed"
+    await db.close()
+
+
+async def test_new_message_during_initiative_llm_call_cancels_delivery(tmp_path):
+    db = await db_for(tmp_path)
+    await db.ensure_user(1, "owner")
+    lifecycle = ConversationLifecycleManager(db, 30, 12)
+    await lifecycle.on_user_message(10)
+    await db.execute("UPDATE conversation_lifecycle SET last_meaningful_interaction_at=datetime('now','-2 hours') WHERE chat_id=10")
+
+    class Provider:
+        async def decide_initiative(self, _request):
+            await db.record_message(chat_id=10, telegram_message_id=99, user_id=1, sender="user", kind="text", text="новое сообщение")
+            return InitiativeDecision(should_message=True, reason="old", actions=[Action(type=ActionType.text, text="старое")])
+
+    manager = InitiativeManager(Provider())
+    scheduler = InitiativeScheduler(db, manager, lifecycle, ResponseScheduler(), InitiativeContext(), settings(), rng=lambda: 0)
+    assert not await scheduler._decide(1, 10, "spontaneous")
+    assert manager.sent == []
+    await db.close()
