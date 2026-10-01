@@ -94,16 +94,10 @@ class ConversationManager:
             return generation
         self.generations[chat_id] = generation
         daily_state = await self.presence.state(chat_id) if self.presence else None
-        bedtime = self.presence.bedtime_state(window_minutes=self.bedtime_window_minutes) if self.presence and self.bedtime_ritual_enabled else None
         if daily_state and daily_state["availability"] == "sleep":
             await self.scheduler.schedule_at(user_id, chat_id, generation, daily_state["sleep_until"], "normal")
             log.info("presence_sleep_defers_turn chat_id=%s until=%s", chat_id, daily_state["sleep_until"])
             return generation
-        if bedtime and bedtime["bedtime_window"]:
-            bedtime["already_said_goodnight"] = await self.context.db.bedtime_done(chat_id, bedtime["local_day"])
-            # The normal primary generation receives compact bedtime context;
-            # never spend a separate timing or ritual LLM call here.
-            return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content, bedtime_state=bedtime)
         if self.scheduler and await self.scheduler.has_pending(chat_id):
             await self.scheduler.schedule(user_id, chat_id, generation, "normal")
             return generation
@@ -158,6 +152,10 @@ class ConversationManager:
             log.debug("Dropping stale generation before context build generation=%s", generation)
             return generation
         life_state = await self.presence.state(chat_id) if self.presence else None
+        if bedtime_state is None and self.presence and self.bedtime_ritual_enabled:
+            bedtime_state = self.presence.bedtime_state(window_minutes=self.bedtime_window_minutes)
+            if bedtime_state["bedtime_window"]:
+                bedtime_state["already_said_goodnight"] = await self.context.db.bedtime_done(chat_id, bedtime_state["local_day"])
         self_life_gate_open = bool(self.self_life and (not life_state or life_state.get("availability") != "sleep") and self.self_life.continuation_gate())
         log.info("self_life_gate_%s chat_id=%s", "open" if self_life_gate_open else "closed", chat_id)
         build_with_breakdown = getattr(self.context, "build_with_breakdown", None)
@@ -239,11 +237,13 @@ class ConversationManager:
         if not response.actions or all(action.type == ActionType.silence for action in response.actions):
             log.info("silence_selected chat_id=%s generation=%s", chat_id, generation)
             return generation
+        await self.queue.enqueue_many(chat_id,generation,response.actions)
+        # Queue acceptance is the delivery-pipeline boundary.  Do not consume
+        # today's ritual before enqueue succeeds.
         if bedtime_state and bedtime_state.get("bedtime_window") and not bedtime_state.get("already_said_goodnight"):
             farewell_words = ("спокойной ночи", "спать", "выруба", "отруба", "бб")
             if any(action.text and any(word in action.text.lower() for word in farewell_words) for action in response.actions if action.type == ActionType.text):
                 await self.context.db.record_bedtime(chat_id, bedtime_state["local_day"], "conversation")
-        await self.queue.enqueue_many(chat_id,generation,response.actions)
         return generation
 
     async def _validate_action_targets(self, chat_id, actions, current_message_id):

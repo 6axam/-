@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.15.1 — Bedtime delivery semantics
+`unreleased` · 2026-10-01
+
+Bedtime context больше не обходит обычный response timing, а запись о nightly farewell создаётся только после успешной постановки действий в ActionQueue.
+
 ## v1.15 — Bedtime ritual
 `ff93532` · 2026-10-01
 

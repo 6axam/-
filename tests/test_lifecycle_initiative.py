@@ -7,6 +7,7 @@ from app.conversation.manager import ConversationManager
 from app.database.db import Database
 from app.initiative.scheduler import InitiativeScheduler
 from app.llm.schemas import ConversationMetadata, InitiativeDecision, LLMResponse
+from app.llm.schemas import ResponseTiming
 
 
 async def db_for(tmp_path):
@@ -206,4 +207,50 @@ async def test_bedtime_candidate_uses_its_own_gate_and_persists_once_per_day(tmp
     assert await db.bedtime_done(10, "2026-10-01")
     assert not await scheduler.check_chat(1, 10)
     assert provider.calls == 1
+    await db.close()
+
+
+async def test_bedtime_does_not_bypass_regular_timing_decision():
+    class Db:
+        async def bedtime_done(self, *_args): return False
+    class Context:
+        db = Db()
+        async def build(self, *_args): return "system", "context"
+        async def build_with_breakdown(self, *_args, **_kwargs): return "system", "context", {}
+    class Presence:
+        async def state(self, _chat): return {"availability": "available", "phase": "college", "event": None}
+        def bedtime_state(self, **_kwargs): return {"bedtime_window": True, "local_day": "2026-10-01", "local_time": "2026-10-01 00:45", "minutes_until_sleep": 15}
+        @staticmethod
+        def allows_delayed_reply(_state): return True
+    class Scheduler:
+        async def cancel_chat(self, _chat): return 0
+        async def has_pending(self, _chat): return False
+        async def is_active_conversation(self, _chat): return False
+        def bind(self, _manager): pass
+    class Provider:
+        def __init__(self): self.timing_calls = 0
+        async def decide_timing(self, _request): self.timing_calls += 1; return ResponseTiming()
+        async def generate(self, _request): return LLMResponse(actions=[Action(type=ActionType.silence)])
+    provider = Provider()
+    manager = ConversationManager(provider, Context(), ActionQueue(Executor()), scheduler=Scheduler(), presence=Presence(), bedtime_ritual_enabled=True)
+    await manager.handle_turn(1, 10, "привет")
+    assert provider.timing_calls == 1
+
+
+async def test_bedtime_is_not_persisted_when_enqueue_fails(tmp_path):
+    db = await db_for(tmp_path)
+    class Context:
+        def __init__(self): self.db = db
+        async def build_with_breakdown(self, *_args, **_kwargs): return "system", "context", {}
+    class Provider:
+        async def generate(self, _request): return LLMResponse(actions=[Action(type=ActionType.text, text="спокойной ночи")])
+    class BrokenQueue:
+        executor = SimpleNamespace()
+        async def enqueue_many(self, *_args): raise RuntimeError("queue unavailable")
+        def is_busy(self, _chat): return False
+    manager = ConversationManager(Provider(), Context(), BrokenQueue())
+    manager.generations[10] = "g"
+    with __import__("pytest").raises(RuntimeError):
+        await manager._generate(1, 10, "пока", "g", bedtime_state={"bedtime_window": True, "already_said_goodnight": False, "local_day": "2026-10-01"})
+    assert not await db.bedtime_done(10, "2026-10-01")
     await db.close()
