@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     college_weekdays: Annotated[tuple[int, ...], NoDecode] = (0, 1, 2, 3, 4)
     college_normal_delay_multiplier: float = Field(default=1.5, ge=1.0, le=4.0)
     college_active_delay_cap_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
+    read_delay_free_min_seconds: float = Field(default=2, ge=0, le=3600)
+    read_delay_free_max_seconds: float = Field(default=20, ge=0, le=3600)
+    read_delay_active_free_min_seconds: float = Field(default=1, ge=0, le=300)
+    read_delay_active_free_max_seconds: float = Field(default=5, ge=0, le=300)
+    read_delay_college_min_seconds: float = Field(default=60, ge=0, le=7200)
+    read_delay_college_max_seconds: float = Field(default=900, ge=0, le=7200)
+    read_delay_busy_min_seconds: float = Field(default=60, ge=0, le=7200)
+    read_delay_busy_max_seconds: float = Field(default=600, ge=0, le=7200)
+    read_delay_away_min_seconds: float = Field(default=180, ge=0, le=7200)
+    read_delay_away_max_seconds: float = Field(default=1200, ge=0, le=7200)
+    read_delay_after_wake_min_seconds: float = Field(default=30, ge=0, le=3600)
+    read_delay_after_wake_max_seconds: float = Field(default=300, ge=0, le=3600)
     image_generation_enabled: bool = False
     image_generation_daily_limit: int = 2
     image_generation_cooldown_hours: float = 12

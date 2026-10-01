@@ -7,6 +7,7 @@ from app.llm.openrouter_provider import OpenRouterProvider
 from app.conversation.context import ContextBuilder
 from app.conversation.manager import ConversationManager
 from app.conversation.response_scheduler import ResponseScheduler
+from app.conversation.read_scheduler import ReadScheduler, ReadTimingEngine
 from app.conversation.response_timing import ResponseTimingEngine
 from app.conversation.message_splitter import MessageSplitter
 from app.conversation.lifecycle import ConversationLifecycleManager
@@ -77,26 +78,52 @@ async def main():
     )
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager)
+    read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
+
+    async def on_messages_read(record):
+        """Internal-read hook; a future MTProto adapter can send receipts here."""
+        if not await read_scheduler.is_current(record):
+            return
+        chat_id, boundary = record["chat_id"], record["boundary_message_id"]
+        rows = await db.unread_user_messages_up_to(chat_id, boundary)
+        if not rows:
+            return
+        message_ids = [row["telegram_message_id"] for row in rows]
+        # Store the boundary before conversation work. Later arrivals remain
+        # unread and will get their own job instead of leaking into this turn.
+        await db.mark_messages_read(chat_id, message_ids)
+        if not await read_scheduler.is_current(record):
+            return
+        parts = []
+        for row in rows:
+            if row["type"] == "sticker":
+                semantic = await stickers.semantic_for_file_id(row["sticker_file_id"])
+                parts.append(semantic or "Максим отправил стикер.")
+            elif row["type"] == "photo":
+                parts.append((row["text"] or "[Максим отправил изображение]").strip())
+            else:
+                parts.append(row["text"] or "")
+        merged = "\n".join(part for part in parts if part) or "[сообщение без текста]"
+        user_id = rows[-1]["user_id"]
+        # A newer arrival during the tiny claim→dispatch race must receive its
+        # own read event rather than triggering a reply to the old batch.
+        if await db.has_unread_user_message_after(chat_id, boundary):
+            logging.getLogger(__name__).info("read_batch_superseded chat_id=%s boundary_message_id=%s", chat_id, boundary)
+            return
+        turn_id = await db.create_turn(
+            user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=message_ids,
+        )
+        images = await media.inputs_for_messages(chat_id, message_ids) if provider.supports_vision else []
+        if not provider.supports_vision and any(row["type"] == "photo" for row in rows):
+            logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
+        await manager.handle_turn(user_id, chat_id, merged, turn_id, message_ids[-1], images)
+
+    read_scheduler.bind(on_messages_read)
+
     async def flush(chat_id, messages):
         if not messages: return
         user_id = messages[-1].from_user.id
-        parts = []
-        for message in messages:
-            if message.sticker:
-                semantic = await stickers.semantic_for_unique_id(message.sticker.file_unique_id)
-                parts.append(semantic or "Максим отправил стикер.")
-            elif message.photo:
-                parts.append((message.caption or "[Максим отправил изображение]").strip())
-            else:
-                parts.append(message.text or message.caption or "")
-        merged = "\n".join(part for part in parts if part) or "[сообщение без текста]"
-        turn_id = await db.create_turn(user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=[m.message_id for m in messages])
-        images = await media.inputs_for_messages(chat_id, [m.message_id for m in messages]) if provider.supports_vision else []
-        if provider.supports_vision:
-            for message in messages: images.extend(buffer.content_for(chat_id, message.message_id))
-        if not provider.supports_vision and any(message.photo for message in messages):
-            logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
-        await manager.handle_turn(user_id,chat_id,merged,turn_id,messages[-1].message_id,images)
+        await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages))
     buffer = IncomingBuffer(s.debounce_seconds,flush)
     initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle), s, buffer)
     manager.initiative_scheduler = initiative
@@ -107,6 +134,7 @@ async def main():
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(scheduler.run())
+            tg.create_task(read_scheduler.run())
             tg.create_task(initiative.run())
             if s.daily_life_enabled: tg.create_task(daily_life.run())
             if s.sticker_analysis_enabled and provider.supports_vision:

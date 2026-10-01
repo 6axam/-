@@ -60,6 +60,11 @@ class StickerManager:
         motion = f"; движение: {row['animation_description']}" if row["animation_description"] else ""
         return f"Максим отправил стикер: {row['visual_description']}{motion}. Смысл: {', '.join(json.loads(row['meanings_json']))}."
 
+    async def semantic_for_file_id(self, file_id: str) -> str | None:
+        """Resolve a persisted incoming sticker after its internal read delay."""
+        row = await self.db.fetchone("SELECT file_unique_id FROM stickers WHERE file_id=?", (file_id,))
+        return await self.semantic_for_unique_id(row["file_unique_id"]) if row else None
+
     @staticmethod
     def _tokens(value: str) -> set[str]: return set(re.findall(r"[\w_]+", value.lower(), flags=re.UNICODE))
 

@@ -14,6 +14,10 @@ class ConversationManager:
         self.memory_manager = memory_manager
         self.initiative_scheduler = None
         self.generations: dict[int, str] = {}
+        # Incremented at arrival time, before any await. It closes the small
+        # read-claim → generation race where a newer message arrives while an
+        # older batch is still entering `handle_turn`.
+        self.interrupt_versions: dict[int, int] = {}
         self.requests: dict[int, asyncio.Task] = {}
         # One lightweight Telegram typing session per active generation.  It is
         # deliberately separate from ActionQueue typing, which happens just
@@ -54,6 +58,7 @@ class ConversationManager:
     async def interrupt(self, chat_id: int) -> None:
         # Do this first and durably: a scheduler may otherwise claim the row
         # while a new incoming Telegram message is still in debounce.
+        self.interrupt_versions[chat_id] = self.interrupt_versions.get(chat_id, 0) + 1
         if self.scheduler:
             await self.scheduler.cancel_chat(chat_id)
         generation = self.generations.pop(chat_id, None)
@@ -79,8 +84,13 @@ class ConversationManager:
         log.debug("nonverbal_reaction_received chat_id=%s emoji=%s", chat_id, emoji)
 
     async def handle_turn(self, user_id, chat_id, text, turn_id=None, target_message_id=None, user_content=None):
+        expected_interrupt_version = self.interrupt_versions.get(chat_id, 0) + 1
         await self.interrupt(chat_id)
-        generation = str(uuid.uuid4()); self.generations[chat_id] = generation
+        generation = str(uuid.uuid4())
+        if self.interrupt_versions.get(chat_id) != expected_interrupt_version:
+            log.debug("Dropping superseded turn before generation chat_id=%s", chat_id)
+            return generation
+        self.generations[chat_id] = generation
         daily_state = await self.presence.state(chat_id) if self.presence else None
         if daily_state and daily_state["availability"] == "sleep":
             await self.scheduler.schedule_at(user_id, chat_id, generation, daily_state["sleep_until"], "normal")

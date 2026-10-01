@@ -227,6 +227,28 @@ MIGRATIONS = [
     ALTER TABLE scheduled_responses ADD COLUMN delay_event_id INTEGER REFERENCES daily_events(id);
     CREATE INDEX IF NOT EXISTS idx_scheduled_delay_event ON scheduled_responses(delay_event_id);
     """,
+    """
+    -- Internal read state only. Telegram Bot API read receipts are not
+    -- touched; a future MTProto adapter can subscribe to completed jobs.
+    ALTER TABLE messages ADD COLUMN internally_read_at TEXT;
+    -- All rows predating this mechanism are historical conversation, not a
+    -- newly arrived unread batch. Without this backfill the first live read
+    -- after deployment would fold the entire chat into one turn.
+    UPDATE messages SET internally_read_at=timestamp
+    WHERE sender='user' AND internally_read_at IS NULL;
+    CREATE TABLE IF NOT EXISTS scheduled_reads (
+        id INTEGER PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        boundary_message_id INTEGER NOT NULL,
+        read_after TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','processing','completed','cancelled')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reads_due ON scheduled_reads(status, read_after);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reads_chat_status ON scheduled_reads(chat_id, status, id DESC);
+    """,
 ]
 
 
@@ -388,6 +410,39 @@ class Database:
         row = await self.fetchone("SELECT MAX(id) AS last_bot_id FROM messages WHERE chat_id=? AND sender='assistant'", (chat_id,))
         rows = await self.fetchall("SELECT telegram_message_id FROM messages WHERE chat_id=? AND sender='user' AND id>? ORDER BY id", (chat_id, row["last_bot_id"] or 0))
         return user_id, text, [row["telegram_message_id"] for row in rows]
+
+    async def unread_user_messages_up_to(self, chat_id: int, boundary_message_id: int):
+        return await self.fetchall(
+            "SELECT id,telegram_message_id,user_id,type,text,sticker_file_id FROM messages "
+            "WHERE chat_id=? AND sender='user' AND internally_read_at IS NULL AND telegram_message_id<=? ORDER BY id",
+            (chat_id, boundary_message_id),
+        )
+
+    async def mark_messages_read(self, chat_id: int, message_ids: list[int]) -> None:
+        if not message_ids:
+            return
+        marks = ",".join("?" for _ in message_ids)
+        await self.execute(
+            f"UPDATE messages SET internally_read_at=CURRENT_TIMESTAMP WHERE chat_id=? AND sender='user' "
+            f"AND internally_read_at IS NULL AND telegram_message_id IN ({marks})",
+            (chat_id, *message_ids),
+        )
+
+    async def has_unread_user_message_after(self, chat_id: int, boundary_message_id: int) -> bool:
+        """A newer arrival must not be silently folded into a claimed batch."""
+        return bool(await self.fetchone(
+            "SELECT 1 FROM messages WHERE chat_id=? AND sender='user' AND internally_read_at IS NULL "
+            "AND telegram_message_id>? LIMIT 1",
+            (chat_id, boundary_message_id),
+        ))
+
+    async def chat_read_signals(self, chat_id: int) -> dict:
+        row = await self.fetchone(
+            "SELECT (julianday('now')-julianday(MAX(CASE WHEN sender='assistant' THEN timestamp END)))*86400 AS since_bot "
+            "FROM messages WHERE chat_id=?",
+            (chat_id,),
+        )
+        return {"seconds_since_bot": row["since_bot"] if row and row["since_bot"] is not None else None}
 
     async def import_sticker_pack(self, *, name: str, title: str, stickers: list[tuple[str, str, str, str]], current_unique_id: str | None) -> int:
         """One SQLite transaction for a whole pack; returns number of newly queued jobs."""
