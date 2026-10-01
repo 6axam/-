@@ -19,7 +19,7 @@ class ContextBuilder:
                  memory_max_items: int = 6, self_life=None,
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
                  timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
-                 reaction_tendency: float = .40):
+                 reaction_tendency: float = .40, voice_message_tendency: float = .20):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.recent_max_messages = recent_max_messages
@@ -32,7 +32,7 @@ class ContextBuilder:
         self.self_life_token_budget = self_life_token_budget
         self.self_life_max_items = self_life_max_items
         self.timezone_name = timezone_name
-        self.sticker_tendency, self.reaction_tendency = sticker_tendency, reaction_tendency
+        self.sticker_tendency, self.reaction_tendency, self.voice_message_tendency = sticker_tendency, reaction_tendency, voice_message_tendency
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -104,8 +104,8 @@ class ContextBuilder:
         response = response_rules()
         action_tendencies = (
             "ACTION TENDENCIES\n"
-            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}. "
-            "These are preferences, not quotas: use stickers/reactions more readily when they are a natural emotional response, "
+            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}; voice_message_tendency={self.voice_message_tendency:.2f}. "
+            "These are preferences, not quotas: use stickers/reactions/voice more readily when they are a natural emotional response, "
             "but never add one mechanically or instead of needed text."
         )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")

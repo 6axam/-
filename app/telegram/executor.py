@@ -9,7 +9,7 @@ from app.telegram.text import strip_emoji
 class TelegramActionExecutor:
     typing_refresh_seconds = 4.0
 
-    def __init__(self, bot, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None, image_daily_limit=2, image_cooldown_hours=12): self.bot,self.db,self.stickers,self.lifecycle,self.image_provider,self.image_prompts,self.image_daily_limit,self.image_cooldown_hours,self.timing = bot,db,stickers,lifecycle,image_provider,image_prompts,image_daily_limit,image_cooldown_hours,TimingEngine()
+    def __init__(self, bot, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None, image_daily_limit=2, image_cooldown_hours=12, voice_provider=None): self.bot,self.db,self.stickers,self.lifecycle,self.image_provider,self.image_prompts,self.image_daily_limit,self.image_cooldown_hours,self.voice_provider,self.timing = bot,db,stickers,lifecycle,image_provider,image_prompts,image_daily_limit,image_cooldown_hours,voice_provider,TimingEngine()
 
     async def start_generation_typing(self, chat_id: int):
         """Show typing while an LLM request is in flight, refreshing it safely."""
@@ -73,6 +73,23 @@ class TelegramActionExecutor:
                 import logging
                 logging.getLogger(__name__).warning("image_generation_failed chat_id=%s error=%s", item.chat_id, exc)
                 await self.db.execute("UPDATE image_generation_usage SET status='failed' WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (item.chat_id,))
+        elif a.type == ActionType.voice_message and a.voice_intent:
+            import logging
+            if not self.voice_provider or not getattr(self.voice_provider, "enabled", True):
+                logging.getLogger(__name__).debug("voice_message_skipped_disabled chat_id=%s", item.chat_id)
+                return
+            try:
+                generated = await self.voice_provider.generate(a.voice_intent.text, mood=a.voice_intent.mood, pace=a.voice_intent.pace, energy=a.voice_intent.energy)
+                if not generated or not generated.data:
+                    logging.getLogger(__name__).debug("voice_message_skipped_unavailable chat_id=%s", item.chat_id)
+                    return
+                extension = ".ogg" if generated.mime_type in {"audio/ogg", "audio/opus"} else ".mp3" if generated.mime_type == "audio/mpeg" else ".bin"
+                voice = BufferedInputFile(generated.data, filename="anya" + extension)
+                sent = await self.bot.send_voice(item.chat_id, voice=voice)
+                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="voice", text=a.voice_intent.text)
+                if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("voice_message_failed chat_id=%s error=%s", item.chat_id, exc)
         elif a.type == ActionType.reaction and a.emoji:
             if not a.target_message_id:
                 import logging

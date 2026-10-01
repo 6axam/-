@@ -30,6 +30,7 @@ from app.memory.extractor import MemoryExtractor
 from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
 from app.self_life import SelfLifeManager
+from app.voice import DisabledVoiceProvider
 
 
 def make_provider(settings):
@@ -55,7 +56,7 @@ async def main():
     else:
         image_provider = DisabledImageGenerationProvider()
     weather = WeatherService(s.weather_latitude, s.weather_longitude, enabled=s.weather_enabled, ttl_minutes=s.weather_cache_minutes)
-    executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours); queue = ActionQueue(executor)
+    executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=DisabledVoiceProvider()); queue = ActionQueue(executor)
     provider = make_provider(s)
     from app.character.manager import EmotionalStateManager, PersonalityManager
     personality, emotional_state = PersonalityManager(db), EmotionalStateManager(db)
@@ -79,7 +80,7 @@ async def main():
                              self_life_token_budget=s.self_life_context_token_budget,
                              self_life_max_items=s.self_life_context_max_items,
                              timezone_name=s.timezone, sticker_tendency=s.sticker_tendency,
-                             reaction_tendency=s.reaction_tendency)
+                             reaction_tendency=s.reaction_tendency, voice_message_tendency=s.voice_message_tendency)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,

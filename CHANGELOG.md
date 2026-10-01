@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.16 — Outgoing voice message scaffold
+`unreleased` · 2026-10-01
+
+Добавлен provider-neutral `voice_message` action: structured voice intent, tendency в prompt, disabled provider, Telegram `send_voice`, persistence spoken text и offline tests. Реальный TTS/API намеренно не подключён.
+
 ## v1.15.1 — Bedtime delivery semantics
 `b27215d` · 2026-10-01
 

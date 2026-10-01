@@ -153,6 +153,13 @@ def test_llm_temperature_loads_and_validates_range():
         Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", llm_temperature=2.01)
 
 
+def test_voice_message_tendency_loads_and_validates_range():
+    settings = Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", voice_message_tendency=.20)
+    assert settings.voice_message_tendency == .20
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", voice_message_tendency=1.01)
+
+
 def test_college_weekdays_parses_compact_env_value_and_validates_days():
     settings = Settings(
         _env_file=None, telegram_bot_token="token", owner_telegram_id=1,

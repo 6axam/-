@@ -42,6 +42,8 @@ git diff --check
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 164 passed | 6.25 s | 7.34 s | Full suite after Bedtime ritual. |
 | 2026-10-01 | `./.venv/bin/python -m pytest tests/test_lifecycle_initiative.py tests/test_presence_replies.py -q` | 23 passed | 4.23 s | — | Bedtime timing and enqueue-failure regression checks. |
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 166 passed | 6.17 s | 7.37 s | Full suite after bedtime timing/persistence fixes. |
+| 2026-10-01 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_llm.py tests/test_response_prompt.py -q` | 21 passed | 4.18 s | — | Voice schema, provider/executor, config and compact prompt checks. |
+| 2026-10-01 | `./.venv/bin/python -m pytest -q` | 172 passed | 6.48 s | 7.65 s | Full suite after outgoing voice-message scaffold. |
 
 ## Maintenance rule
 

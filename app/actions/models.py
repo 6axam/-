@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ActionType(str, Enum):
-    text = "text"; sticker = "sticker"; reaction = "reaction"; image = "image"; pause = "pause"; silence = "silence"
+    text = "text"; sticker = "sticker"; reaction = "reaction"; image = "image"; voice_message = "voice_message"; pause = "pause"; silence = "silence"
 
 
 class Duration(str, Enum):
@@ -37,6 +37,15 @@ class ImageIntent(BaseModel):
     caption: str | None = Field(default=None, max_length=800)
 
 
+class VoiceIntent(BaseModel):
+    """Provider-neutral request for one spoken Telegram voice message."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=1200)
+    mood: str | None = Field(default=None, max_length=80)
+    pace: str | None = Field(default=None, max_length=40)
+    energy: float = Field(default=.5, ge=0, le=1)
+
+
 class Action(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: ActionType
@@ -48,6 +57,7 @@ class Action(BaseModel):
     target_message_id: int | None = None
     reply_to_message_id: int | None = None
     image_intent: ImageIntent | None = None
+    voice_intent: VoiceIntent | None = None
     cancelable: bool = True
     automatic: bool = False
     priority: int = 0
@@ -64,6 +74,8 @@ class Action(BaseModel):
             raise ValueError("reaction action requires emoji")
         if self.type == ActionType.image and not self.image_intent:
             raise ValueError("image action requires image_intent")
+        if self.type == ActionType.voice_message and not self.voice_intent:
+            raise ValueError("voice_message action requires voice_intent")
         return self
 
 
