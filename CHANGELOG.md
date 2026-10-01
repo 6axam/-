@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.17.2 — Direct voice capability exposure
+`unreleased` · 2026-10-01
+
+Когда voice runtime доступен, system prompt теперь явно подтверждает реальную Telegram voice-возможность и при прямой просьбе ставит `voice_message` выше tendency; startup логирует состояние без секретов.
+
 ## v1.17.1 — Voice speech and render tuning
 `a712108` · 2026-10-01
 

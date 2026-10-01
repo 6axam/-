@@ -46,6 +46,8 @@ git diff --check
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 172 passed | 6.48 s | 7.65 s | Full suite after outgoing voice-message scaffold. |
 | 2026-10-01 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_context_budget.py tests/test_llm.py -q` | 28 passed | 4.36 s | — | BytePlus request/response, voice availability and config contract checks. |
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 174 passed | 6.43 s | 7.61 s | Full suite after Seed Audio provider integration. |
+| 2026-10-01 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_response_prompt.py -q` | 10 passed | 3.84 s | — | Voice capability exposure and compact-prompt contract. |
+| 2026-10-01 | `./.venv/bin/python -m pytest -q` | 174 passed | 6.02 s | 7.18 s | Full suite after direct voice-request policy fix. |
 
 ## Maintenance rule
 

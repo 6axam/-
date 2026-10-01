@@ -1,4 +1,5 @@
 import asyncio, logging
+from pathlib import Path
 from aiogram import Bot, Dispatcher
 from app.config import load_settings
 from app.database.db import Database
@@ -64,6 +65,11 @@ async def main():
         image_provider = DisabledImageGenerationProvider()
     weather = WeatherService(s.weather_latitude, s.weather_longitude, enabled=s.weather_enabled, ttl_minutes=s.weather_cache_minutes)
     voice_provider = make_voice_provider(s)
+    logging.getLogger(__name__).info(
+        "voice_runtime enabled=%s provider=%s available=%s tendency=%.2f reference_exists=%s",
+        s.voice_generation_enabled, getattr(voice_provider, "name", "unknown"), voice_provider.enabled,
+        s.voice_message_tendency, Path(s.anya_voice_reference).is_file(),
+    )
     executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider); queue = ActionQueue(executor)
     provider = make_provider(s)
     from app.character.manager import EmotionalStateManager, PersonalityManager

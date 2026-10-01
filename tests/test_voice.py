@@ -26,9 +26,12 @@ async def test_voice_tendency_reaches_system_prompt(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'voice.sqlite'}"); await db.connect()
     system, _, breakdown = await ContextBuilder(db, voice_message_tendency=.20, voice_message_available=True).build_with_breakdown(1, 10, "привет")
     assert "voice_message_tendency=0.20" in system
+    assert "backend can really generate and send a Telegram voice message" in system
+    assert "direct voice request" in system or "скинь голосовуху" in system
     assert breakdown["components"]["action_tendencies"]["tokens"] > 0
     disabled, _, _ = await ContextBuilder(db, voice_message_tendency=.20, voice_message_available=False).build_with_breakdown(1, 10, "привет")
     assert "voice_message_available=false" in disabled and "voice_message_tendency=0.00" in disabled
+    assert "Voice messaging is unavailable. Do not choose voice_message." in disabled
     await db.close()
 
 
