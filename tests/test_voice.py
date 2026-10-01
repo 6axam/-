@@ -9,6 +9,10 @@ from app.conversation.context import ContextBuilder
 from app.database.db import Database
 from app.telegram.executor import TelegramActionExecutor
 from app.voice import DisabledVoiceProvider, VoiceGenerationResult, VoiceProvider
+from app.voice.byteplus_seed import BytePlusSeedAudioProvider, VoiceProviderError
+import base64
+import httpx
+import json
 
 
 def test_voice_action_requires_voice_intent():
@@ -20,9 +24,11 @@ def test_voice_action_requires_voice_intent():
 
 async def test_voice_tendency_reaches_system_prompt(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'voice.sqlite'}"); await db.connect()
-    system, _, breakdown = await ContextBuilder(db, voice_message_tendency=.20).build_with_breakdown(1, 10, "привет")
+    system, _, breakdown = await ContextBuilder(db, voice_message_tendency=.20, voice_message_available=True).build_with_breakdown(1, 10, "привет")
     assert "voice_message_tendency=0.20" in system
     assert breakdown["components"]["action_tendencies"]["tokens"] > 0
+    disabled, _, _ = await ContextBuilder(db, voice_message_tendency=.20, voice_message_available=False).build_with_breakdown(1, 10, "привет")
+    assert "voice_message_available=false" in disabled and "voice_message_tendency=0.00" in disabled
     await db.close()
 
 
@@ -39,6 +45,7 @@ class VoiceBot:
     async def send_voice(self, chat_id, *, voice):
         self.sent.append((chat_id, voice.data, voice.filename))
         return SimpleNamespace(message_id=77)
+    async def send_chat_action(self, *_args): pass
 
 
 class Lifecycle:
@@ -80,3 +87,24 @@ async def test_queue_keeps_voice_as_one_action_without_text_cadence_split():
     await queue.enqueue_many(10, "g", [Action(type=ActionType.voice_message, voice_intent=VoiceIntent(text="ну да"))])
     import asyncio; await asyncio.sleep(.02)
     assert executor.actions == [ActionType.voice_message]
+
+
+async def test_byteplus_provider_builds_request_and_decodes_audio(tmp_path):
+    reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
+    seen = {}
+    async def handler(request):
+        seen["headers"], seen["json"] = dict(request.headers), json.loads(request.content)
+        return httpx.Response(200, json={"data": {"audio": base64.b64encode(b"ogg").decode(), "duration": 1.5}})
+    provider = BytePlusSeedAudioProvider("secret-key", "seed-audio-1.0", "https://example.test/create", reference, transport=httpx.MockTransport(handler))
+    result = await provider.generate("ну да", mood="sleepy", pace="slow", energy=.2)
+    assert result.data == b"ogg" and result.mime_type == "audio/ogg" and result.duration_seconds == 1.5
+    assert seen["headers"]["x-api-key"] == "secret-key" and seen["headers"]["x-api-request-id"]
+    assert seen["json"]["model"] == "seed-audio-1.0" and "@Audio1" in seen["json"]["text_prompt"]
+    assert seen["json"]["references"][0]["audio_data"] == base64.b64encode(b"reference").decode()
+    assert seen["json"]["audio_config"]["format"] == "ogg_opus" and seen["json"]["audio_config"]["sample_rate"] == 48000
+
+
+async def test_byteplus_malformed_response_is_controlled(tmp_path):
+    reference = tmp_path / "ref.wav"; reference.write_bytes(b"reference")
+    provider = BytePlusSeedAudioProvider("key", "seed-audio-1.0", "https://example.test/create", reference, transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": {}})))
+    with pytest.raises(VoiceProviderError): await provider.generate("ну да")

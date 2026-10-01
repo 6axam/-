@@ -1,4 +1,5 @@
 .env
+assets/anya/voice_reference.*
 data/
 __pycache__/
 *.pyc

@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Annotated
-from pydantic import Field, ValidationError, field_validator
+from pathlib import Path
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -33,6 +34,15 @@ class Settings(BaseSettings):
     sticker_tendency: float = Field(default=.55, ge=0, le=1)
     reaction_tendency: float = Field(default=.40, ge=0, le=1)
     voice_message_tendency: float = Field(default=.20, ge=0, le=1)
+    voice_generation_enabled: bool = False
+    voice_provider: str = "byteplus_seed"
+    voice_api_key: str | None = None
+    voice_model: str = "seed-audio-1.0"
+    voice_base_url: str = "https://voice.ap-southeast-1.bytepluses.com/api/v3/tts/create"
+    anya_voice_reference: str = "assets/anya/voice_reference.wav"
+    voice_output_format: str = "ogg_opus"
+    voice_sample_rate: int = Field(default=48000, ge=8000, le=48000)
+    voice_request_timeout_seconds: float = Field(default=120, ge=10, le=300)
     initiative_enabled: bool = True
     initiative_check_interval_minutes: int = 15
     initiative_min_idle_minutes: int = Field(default=30, ge=1, le=1440)
@@ -145,6 +155,25 @@ class Settings(BaseSettings):
         if not values or any(not isinstance(day, int) or day < 0 or day > 6 for day in values):
             raise ValueError("COLLEGE_WEEKDAYS must contain weekday numbers 0..6")
         return tuple(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def valid_voice_configuration(self):
+        if not self.voice_generation_enabled:
+            return self
+        if self.voice_provider != "byteplus_seed":
+            raise ValueError("VOICE_PROVIDER must be 'byteplus_seed'")
+        if not self.voice_api_key:
+            raise ValueError("VOICE_API_KEY is required when VOICE_GENERATION_ENABLED=true")
+        path = Path(self.anya_voice_reference)
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError("ANYA_VOICE_REFERENCE must be an existing non-empty file when voice generation is enabled")
+        if path.suffix.lower() not in {".wav", ".mp3", ".ogg", ".opus"}:
+            raise ValueError("ANYA_VOICE_REFERENCE must be .wav, .mp3, .ogg, or .opus")
+        if path.stat().st_size > 10 * 1024 * 1024:
+            raise ValueError("ANYA_VOICE_REFERENCE must be 10 MB or smaller")
+        if self.voice_output_format != "ogg_opus" or self.voice_sample_rate != 48000:
+            raise ValueError("Seed Audio Telegram voice output must use ogg_opus at 48000 Hz")
+        return self
 
 
 @lru_cache

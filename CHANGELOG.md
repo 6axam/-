@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.17 — Seed Audio voice generation
+`unreleased` · 2026-10-01
+
+Подключён configurable BytePlus Seed Audio 1.0 provider: cached local reference, OGG/Opus output, fail-fast config validation, recording-voice presence и отдельные prompt-файлы для spoken style и acoustic delivery.
+
 ## v1.16 — Outgoing voice message scaffold
 `296f221` · 2026-10-01
 

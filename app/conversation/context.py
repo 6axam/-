@@ -19,7 +19,7 @@ class ContextBuilder:
                  memory_max_items: int = 6, self_life=None,
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
                  timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
-                 reaction_tendency: float = .40, voice_message_tendency: float = .20):
+                 reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.recent_max_messages = recent_max_messages
@@ -32,7 +32,7 @@ class ContextBuilder:
         self.self_life_token_budget = self_life_token_budget
         self.self_life_max_items = self_life_max_items
         self.timezone_name = timezone_name
-        self.sticker_tendency, self.reaction_tendency, self.voice_message_tendency = sticker_tendency, reaction_tendency, voice_message_tendency
+        self.sticker_tendency, self.reaction_tendency, self.voice_message_tendency, self.voice_message_available = sticker_tendency, reaction_tendency, voice_message_tendency, voice_message_available
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -104,13 +104,17 @@ class ContextBuilder:
         response = response_rules()
         action_tendencies = (
             "ACTION TENDENCIES\n"
-            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}; voice_message_tendency={self.voice_message_tendency:.2f}. "
+            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}; voice_message_available={'true' if self.voice_message_available else 'false'}; voice_message_tendency={self.voice_message_tendency if self.voice_message_available else 0:.2f}. "
             "These are preferences, not quotas: use stickers/reactions/voice more readily when they are a natural emotional response, "
             "but never add one mechanically or instead of needed text."
         )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
         system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + media_rule
+        if self.voice_message_available:
+            system += "\n\nVOICE MESSAGE SPEECH STYLE\n" + read_prompt("voice_message.md")
+        else:
+            system += "\n\nVOICE MESSAGE AVAILABILITY\nVoice messaging is unavailable. Do not choose voice_message."
 
         components = {
             "character_prompt": component_size(character), "life_background": component_size(life_background),

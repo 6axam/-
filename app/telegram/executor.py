@@ -79,7 +79,11 @@ class TelegramActionExecutor:
                 logging.getLogger(__name__).debug("voice_message_skipped_disabled chat_id=%s", item.chat_id)
                 return
             try:
-                generated = await self.voice_provider.generate(a.voice_intent.text, mood=a.voice_intent.mood, pace=a.voice_intent.pace, energy=a.voice_intent.energy)
+                session = await self._start_voice_recording(item.chat_id)
+                try:
+                    generated = await self.voice_provider.generate(a.voice_intent.text, mood=a.voice_intent.mood, pace=a.voice_intent.pace, energy=a.voice_intent.energy)
+                finally:
+                    await self.stop_generation_typing(session)
                 if not generated or not generated.data:
                     logging.getLogger(__name__).debug("voice_message_skipped_unavailable chat_id=%s", item.chat_id)
                     return
@@ -119,3 +123,12 @@ class TelegramActionExecutor:
             print(f"\r🖼️  Генерация изображения не завершилась ({elapsed:.1f}с){' ' * 16}")
             if not task.done(): task.cancel()
             raise
+
+    async def _start_voice_recording(self, chat_id: int):
+        await self.bot.send_chat_action(chat_id, ChatAction.RECORD_VOICE)
+        async def refresh():
+            while True:
+                await asyncio.sleep(self.typing_refresh_seconds)
+                try: await self.bot.send_chat_action(chat_id, ChatAction.RECORD_VOICE)
+                except Exception: import logging; logging.getLogger(__name__).debug("voice_recording_refresh_failed", exc_info=True)
+        return asyncio.create_task(refresh())
