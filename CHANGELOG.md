@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.17.1 — Voice speech and render tuning
+`unreleased` · 2026-10-01
+
+Расширены отдельные voice prompts: Luna получила правила естественной устной русской речи, а Seed Audio — более точный baseline живой Telegram-подачи.
+
 ## v1.17 — Seed Audio voice generation
 `2ed4934` · 2026-10-01
 
