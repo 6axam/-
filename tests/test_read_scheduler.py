@@ -118,6 +118,38 @@ async def test_claimed_boundary_never_marks_a_later_message_read(tmp_path):
     await db.close()
 
 
+async def test_claim_refreshes_coalesced_boundary_before_callback(tmp_path):
+    db, base_scheduler = await make_scheduler(tmp_path)
+    await add_message(db, 10, 1, "first")
+    read_id = await base_scheduler.schedule(1, 10, 1)
+    await db.execute("UPDATE scheduled_reads SET read_after=datetime('now','-1 second') WHERE id=?", (read_id,))
+
+    class RaceScheduler(ReadScheduler):
+        async def claim(self, pending_id):
+            # `process_due()` has already SELECTed boundary=1. A new arrival
+            # coalesces into that still-pending row immediately before claim.
+            await add_message(db, 10, 2, "second")
+            await self.schedule(1, 10, 2)
+            return await super().claim(pending_id)
+
+    scheduler = RaceScheduler(db, Presence(free_state()), ReadTimingEngine(settings(), rng=lambda low, _high: low))
+    received_boundaries = []
+
+    async def read(record):
+        received_boundaries.append(record["boundary_message_id"])
+        rows = await db.unread_user_messages_up_to(record["chat_id"], record["boundary_message_id"])
+        await db.mark_messages_read(record["chat_id"], [row["telegram_message_id"] for row in rows])
+
+    scheduler.bind(read)
+    await scheduler.process_due()
+
+    assert received_boundaries == [2]
+    assert (await db.fetchone("SELECT COUNT(*) AS n FROM messages WHERE internally_read_at IS NULL"))["n"] == 0
+    assert (await db.fetchone("SELECT status FROM scheduled_reads WHERE id=?", (read_id,)))["status"] == "completed"
+    assert not await db.has_unread_user_message_after(10, 0)
+    await db.close()
+
+
 async def test_sleep_read_waits_until_wake_plus_after_wake_delay(tmp_path):
     wake = datetime.now(timezone.utc) + timedelta(minutes=5)
     state = {"availability": "sleep", "phase": "free", "event": None,

@@ -92,17 +92,33 @@ class ReadScheduler:
         )
         return bool(row)
 
+    async def claim(self, read_id: int):
+        """Claim one due job and return its authoritative post-claim row.
+
+        `schedule()` can coalesce a newer message between the due-query
+        snapshot and this conditional status transition.  Never dispatch the
+        stale snapshot in that case: the refreshed processing row contains
+        the latest durable boundary.
+        """
+        claimed = await self.db.execute(
+            "UPDATE scheduled_reads SET status='processing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+            (read_id,),
+        )
+        if not claimed.rowcount:
+            return None
+        return await self.db.fetchone(
+            "SELECT * FROM scheduled_reads WHERE id=? AND status='processing'", (read_id,)
+        )
+
     async def process_due(self):
         if not self.on_messages_read:
             return
         records = await self.db.fetchall(
             "SELECT * FROM scheduled_reads WHERE status='pending' AND julianday(read_after)<=julianday('now') ORDER BY read_after,id"
         )
-        for record in records:
-            claimed = await self.db.execute(
-                "UPDATE scheduled_reads SET status='processing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'", (record["id"],)
-            )
-            if not claimed.rowcount or not await self.is_current(record):
+        for snapshot in records:
+            record = await self.claim(snapshot["id"])
+            if not record or not await self.is_current(record):
                 continue
             log.info("read_due chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
             try:
