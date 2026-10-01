@@ -7,12 +7,16 @@ log = logging.getLogger(__name__)
 
 class ResponseScheduler:
     """Persists delayed work but asks the LLM only when the response is due."""
-    def __init__(self, db, timing, poll_seconds: float = 1.0):
+    def __init__(self, db, timing, poll_seconds: float = 1.0, active_conversation_window_seconds: float = 120.0):
         self.db, self.timing, self.poll_seconds = db, timing, poll_seconds
+        self.active_conversation_window_seconds = active_conversation_window_seconds
         self.manager = None
         self._task = None
 
     def bind(self, manager): self.manager = manager
+
+    async def is_active_conversation(self, chat_id: int) -> bool:
+        return await self.db.chat_is_active(chat_id, self.active_conversation_window_seconds)
 
     async def schedule(self, user_id: int, chat_id: int, generation_id: str, urgency: str, *, daily_state: dict | None = None):
         state = await self.manager.emotional_state.get() if self.manager and self.manager.emotional_state else None
@@ -20,7 +24,7 @@ class ResponseScheduler:
         event = (daily_state or {}).get("event")
         event_availability = event["availability"] if event and event["availability"] in {"busy", "away"} else None
         delay = self.timing.delay(
-            urgency, state, active_conversation=signals["seconds_since_last"] < 75,
+            urgency, state, active_conversation=await self.is_active_conversation(chat_id),
             pending_messages=signals["user_messages"], daily_phase=(daily_state or {}).get("phase", "free"),
             event_availability=event_availability,
         )

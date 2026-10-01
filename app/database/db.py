@@ -391,6 +391,16 @@ class Database:
         row = await self.fetchone("SELECT (julianday('now') - julianday(MAX(timestamp))) * 86400 AS seconds_since_last, SUM(CASE WHEN sender='user' THEN 1 ELSE 0 END) AS user_messages FROM messages WHERE chat_id=?", (chat_id,))
         return {"seconds_since_last": row["seconds_since_last"] or 0, "user_messages": row["user_messages"] or 0}
 
+    async def chat_is_active(self, chat_id: int, window_seconds: float) -> bool:
+        """True only while this chat has a recent assistant reply."""
+        row = await self.fetchone(
+            "SELECT (julianday('now')-julianday(MAX(timestamp)))*86400 AS seconds_since_assistant "
+            "FROM messages WHERE chat_id=? AND sender='assistant'",
+            (chat_id,),
+        )
+        seconds = row["seconds_since_assistant"] if row else None
+        return seconds is not None and seconds <= window_seconds
+
     async def record_media(self, *, chat_id: int, telegram_message_id: int, file_id: str, file_unique_id: str | None, media_type: str, mime_type: str | None, local_cache_path: str | None, byte_size: int | None) -> int:
         await self.execute(
             "INSERT INTO media(chat_id,telegram_file_id,telegram_file_unique_id,media_type,mime_type,local_cache_path,byte_size) VALUES(?,?,?,?,?,?,?) "
@@ -435,14 +445,6 @@ class Database:
             "AND telegram_message_id>? LIMIT 1",
             (chat_id, boundary_message_id),
         ))
-
-    async def chat_read_signals(self, chat_id: int) -> dict:
-        row = await self.fetchone(
-            "SELECT (julianday('now')-julianday(MAX(CASE WHEN sender='assistant' THEN timestamp END)))*86400 AS since_bot "
-            "FROM messages WHERE chat_id=?",
-            (chat_id,),
-        )
-        return {"seconds_since_bot": row["since_bot"] if row and row["since_bot"] is not None else None}
 
     async def import_sticker_pack(self, *, name: str, title: str, stickers: list[tuple[str, str, str, str]], current_unique_id: str | None) -> int:
         """One SQLite transaction for a whole pack; returns number of newly queued jobs."""

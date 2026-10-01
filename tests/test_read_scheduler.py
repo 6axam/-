@@ -9,12 +9,15 @@ from app.database.db import Database
 
 def settings():
     return SimpleNamespace(
+        active_conversation_window_seconds=120,
         read_delay_free_min_seconds=2, read_delay_free_max_seconds=20,
         read_delay_active_free_min_seconds=1, read_delay_active_free_max_seconds=5,
         read_delay_college_min_seconds=60, read_delay_college_max_seconds=900,
         read_delay_busy_min_seconds=60, read_delay_busy_max_seconds=600,
         read_delay_away_min_seconds=180, read_delay_away_max_seconds=1200,
         read_delay_after_wake_min_seconds=30, read_delay_after_wake_max_seconds=300,
+        active_busy_read_min_seconds=20, active_busy_read_max_seconds=60,
+        active_away_read_min_seconds=45, active_away_read_max_seconds=120,
     )
 
 
@@ -53,6 +56,12 @@ def test_read_timing_uses_presence_ranges():
     assert timing.delay({**free_state(), "phase": "college"}, active_conversation=False) == 60
     assert timing.delay({**free_state(), "event": {"availability": "busy"}}, active_conversation=False) == 60
     assert timing.delay({**free_state(), "event": {"availability": "away"}}, active_conversation=False) == 180
+    # A recent reply wins over college, but a real busy/away event still
+    # constrains the fast path.
+    assert timing.delay({**free_state(), "phase": "college"}, active_conversation=True) == 1
+    assert timing.delay({**free_state(), "event": {"availability": "busy"}}, active_conversation=True) == 20
+    assert timing.delay({**free_state(), "event": {"availability": "away"}}, active_conversation=True) == 45
+    assert timing.delay({**free_state(), "availability": "sleep"}, active_conversation=True) == 30
 
 
 async def test_no_conversation_callback_before_internal_read_is_due(tmp_path):
@@ -66,6 +75,21 @@ async def test_no_conversation_callback_before_internal_read_is_due(tmp_path):
 
     assert calls == []
     assert (await db.fetchone("SELECT internally_read_at FROM messages WHERE chat_id=10"))["internally_read_at"] is None
+    await db.close()
+
+
+async def test_recent_assistant_reply_makes_college_read_fast(tmp_path):
+    state = {"availability": "available", "phase": "college", "event": None, "sleep_until": None}
+    db, scheduler = await make_scheduler(tmp_path, state=state)
+    await db.record_message(chat_id=10, telegram_message_id=99, sender="assistant", kind="text", text="ответ")
+    await add_message(db, 10, 1)
+    before = datetime.now(timezone.utc)
+    read_id = await scheduler.schedule(1, 10, 1)
+    row = await db.fetchone("SELECT read_after FROM scheduled_reads WHERE id=?", (read_id,))
+    read_after = datetime.strptime(row["read_after"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    # Test timing uses the low end of the active range (one second), not the
+    # ordinary 60–900 second college range.
+    assert read_after <= before + timedelta(seconds=2)
     await db.close()
 
 

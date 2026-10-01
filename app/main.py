@@ -62,7 +62,9 @@ async def main():
     memory_retrieval = MemoryRetrieval(memory_manager)
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
         s.college_normal_delay_multiplier, s.college_active_delay_cap_seconds,
-    ))
+        s.active_reply_min_seconds, s.active_reply_max_seconds,
+        s.active_busy_reply_max_seconds, s.active_away_reply_max_seconds,
+    ), active_conversation_window_seconds=s.active_conversation_window_seconds)
     context = ContextBuilder(db, personality, emotional_state, stickers,
                              recent_media_hours=s.recent_media_context_hours,
                              recent_max_messages=s.context_recent_max_messages,

@@ -23,13 +23,17 @@ class ReadTimingEngine:
         event = daily_state.get("event")
         event_availability = event["availability"] if event else None
         if event_availability == "away":
+            if active_conversation:
+                return self._range("active_away_read_min_seconds", "active_away_read_max_seconds")
             return self._range("read_delay_away_min_seconds", "read_delay_away_max_seconds")
         if event_availability == "busy":
+            if active_conversation:
+                return self._range("active_busy_read_min_seconds", "active_busy_read_max_seconds")
             return self._range("read_delay_busy_min_seconds", "read_delay_busy_max_seconds")
-        if daily_state.get("phase") == "college":
-            return self._range("read_delay_college_min_seconds", "read_delay_college_max_seconds")
         if active_conversation:
             return self._range("read_delay_active_free_min_seconds", "read_delay_active_free_max_seconds")
+        if daily_state.get("phase") == "college":
+            return self._range("read_delay_college_min_seconds", "read_delay_college_max_seconds")
         return self._range("read_delay_free_min_seconds", "read_delay_free_max_seconds")
 
 
@@ -58,8 +62,7 @@ class ReadScheduler:
             log.info("read_coalesced chat_id=%s boundary_message_id=%s read_after=%s", chat_id, boundary, existing["read_after"])
             return existing["id"]
 
-        signals = await self.db.chat_read_signals(chat_id)
-        active = signals["seconds_since_bot"] is not None and signals["seconds_since_bot"] < 75
+        active = await self.db.chat_is_active(chat_id, self.timing.settings.active_conversation_window_seconds)
         now = self.now()
         delay = self.timing.delay(state, active_conversation=active)
         if state["availability"] == "sleep" and state["sleep_until"]:

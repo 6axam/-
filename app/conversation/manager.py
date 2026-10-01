@@ -100,6 +100,15 @@ class ConversationManager:
             await self.scheduler.schedule(user_id, chat_id, generation, "normal")
             return generation
         if self.scheduler:
+            active_check = getattr(self.scheduler, "is_active_conversation", None)
+            active = await active_check(chat_id) if active_check else False
+            if active:
+                # A recent reply means Anya is already looking at this chat.
+                # This deterministic path avoids an unnecessary timing LLM
+                # request; scheduler still applies busy/away caps.
+                await self.scheduler.schedule(user_id, chat_id, generation, "normal", daily_state=daily_state)
+                log.info("timing_decision_skipped_active_conversation chat_id=%s", chat_id)
+                return generation
             # A free period without a persisted busy/away event always goes
             # straight to generation, so do not spend a second LLM call on a
             # delay that the backend would reject anyway.

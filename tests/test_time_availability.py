@@ -63,15 +63,52 @@ async def test_daily_life_does_not_create_event_during_college_phase(tmp_path):
 
 
 def test_college_and_real_event_change_backend_delay_only():
-    timing = ResponseTimingEngine(college_normal_delay_multiplier=2, college_active_delay_cap_seconds=30)
+    timing = ResponseTimingEngine(college_normal_delay_multiplier=2, college_active_delay_cap_seconds=30,
+                                  active_reply_min_seconds=1, active_reply_max_seconds=10,
+                                  active_busy_reply_max_seconds=30, active_away_reply_max_seconds=60)
     free = timing.delay("normal", active_conversation=False, daily_phase="free")
     college = timing.delay("normal", active_conversation=False, daily_phase="college")
     busy_event = timing.delay("normal", active_conversation=False, daily_phase="free", event_availability="busy")
     assert college == free * 2
     assert busy_event == free * 1.5
-    # In an active morning exchange, there is still a bounded but visibly
-    # longer window than the ordinary five-second conversational cap.
-    assert timing.delay("normal", active_conversation=True, daily_phase="college") == 30
+    assert timing.delay("normal", active_conversation=True, daily_phase="college") == 5.5
+    assert timing.delay("normal", active_conversation=True, event_availability="busy") == 15.5
+    assert timing.delay("normal", active_conversation=True, event_availability="away") == 30.5
+
+
+async def test_recent_assistant_timestamp_controls_shared_active_window(tmp_path):
+    db = await make_db(tmp_path)
+    await db.record_message(chat_id=10, telegram_message_id=1, sender="assistant", kind="text", text="hey")
+    assert await db.chat_is_active(10, 120)
+    await db.execute("UPDATE messages SET timestamp=datetime('now','-121 seconds') WHERE chat_id=10")
+    assert not await db.chat_is_active(10, 120)
+    await db.close()
+
+
+async def test_active_followup_skips_timing_llm_and_uses_scheduler(tmp_path):
+    class Presence:
+        async def state(self, _chat_id):
+            return {"availability": "available", "phase": "college", "event": None}
+        @staticmethod
+        def allows_delayed_reply(_state): return True
+
+    class Provider:
+        async def decide_timing(self, _request):
+            raise AssertionError("active follow-up must not call timing LLM")
+
+    class Scheduler:
+        def __init__(self): self.scheduled = []
+        def bind(self, _manager): pass
+        async def cancel_chat(self, _chat_id): pass
+        async def has_pending(self, _chat_id): return False
+        async def is_active_conversation(self, _chat_id): return True
+        async def schedule(self, *args, **kwargs): self.scheduled.append((args, kwargs))
+
+    scheduler = Scheduler()
+    manager = ConversationManager(Provider(), SimpleNamespace(), ActionQueue(SimpleNamespace(execute=lambda _: None)),
+                                  scheduler=scheduler, presence=Presence())
+    await manager.handle_turn(1, 10, "продолжаю")
+    assert len(scheduler.scheduled) == 1
 
 
 async def test_free_period_skips_llm_requested_delay_without_real_event(tmp_path):
