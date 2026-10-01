@@ -1,7 +1,7 @@
 # Changelog
 
 ## v1.14 — Human-like spontaneous initiative
-`unreleased` · 2026-10-01
+`43f3120` · 2026-10-01
 
 Initiative v2 добавляет spontaneous и semantic кандидаты, persistent safety fence для unread/read jobs, privacy-safe daily state, memory/self-life retrieval, variety history и типы инициатив без дополнительных LLM-вызовов.
 
