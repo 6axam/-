@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.2 — Bounded emotional behaviour modifiers
+`unreleased` · 2026-10-03
+
+Emotional continuity now makes a small, capped difference to response pacing and spontaneous-initiative probability. Sleep, unread messages, pending replies, cooldowns and daily limits remain hard backend gates.
+
 ## v1.20.1 — Luna emotional deltas and context
 `unreleased` · 2026-10-03
 

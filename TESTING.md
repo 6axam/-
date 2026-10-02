@@ -60,6 +60,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 185 passed | 8.88 s | — | Full suite after persistent emotional-engine foundation. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_emotions.py tests/test_emotion_lifecycle.py tests/test_llm.py tests/test_context_budget.py tests/test_character_system.py -q` | 35 passed | 1.34 s | — | Luna emotion-delta schema, accepted-response lifecycle and compact context checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 188 passed | 8.84 s | — | Full suite after Luna emotional-continuity integration. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_time_availability.py tests/test_lifecycle_initiative.py tests/test_presence_replies.py tests/test_delayed_cancellation.py -q` | 45 passed | 5.06 s | — | Bounded emotional pacing and spontaneous-initiative behaviour under existing safety rails. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 190 passed | 8.99 s | — | Full suite after emotional behaviour modifiers. |
 
 ## Maintenance rule
 

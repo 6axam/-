@@ -172,6 +172,27 @@ async def test_spontaneous_gate_is_injectable(tmp_path):
     await db.close()
 
 
+async def test_emotional_spontaneous_modifier_is_bounded_and_after_safety_rails(tmp_path):
+    db = await db_for(tmp_path)
+    lifecycle = ConversationLifecycleManager(db, 30, 12)
+    await lifecycle.on_user_message(10)
+    await db.execute("UPDATE conversation_lifecycle SET last_meaningful_interaction_at=datetime('now','-2 days') WHERE chat_id=10")
+    class Engine:
+        async def get(self, _chat):
+            from app.emotions.model import EmotionalState
+            return EmotionalState(social_need=1, curiosity=1, warmth=1, fatigue=0, hurt=0, irritation=0, anxiety=0)
+    class Context:
+        conversation_context = SimpleNamespace(emotion_engine=Engine())
+        async def build(self, *_args): return "system", "context"
+    provider = DecisionProvider(InitiativeDecision(should_message=False, reason="x"))
+    scheduler = InitiativeScheduler(db, InitiativeManager(provider), lifecycle, ResponseScheduler(), Context(), settings(initiative_spontaneous_probability=.5), rng=lambda: .7)
+    # Emotion can open a bounded spontaneous gate, but an unread message still wins first.
+    assert (await scheduler.eligibility(10))[0]
+    await db.record_message(chat_id=10, telegram_message_id=1, user_id=1, sender="user", kind="text", text="new")
+    assert (await scheduler.eligibility(10))[1] == "unread_user_message"
+    await db.close()
+
+
 async def test_new_message_during_initiative_llm_call_cancels_delivery(tmp_path):
     db = await db_for(tmp_path)
     await db.ensure_user(1, "owner")

@@ -21,10 +21,11 @@ class ResponseTimingEngine:
             elif event_availability == "away":
                 active_high = self.active_away_reply_max_seconds
             delay = (self.active_reply_min_seconds + active_high) / 2
+            delay *= self._emotion_modifier(state)
+            delay = min(active_high, max(self.active_reply_min_seconds, delay))
             return delay * (.85 if pending_messages > 1 else 1)
         delay = (low + high) / 2
-        if state:
-            if state["conversation_interest"] > .75: delay *= .8
+        delay *= self._emotion_modifier(state)
         # Only a real persisted daily event can make an otherwise free
         # afternoon/evening reply substantially slower.
         if event_availability == "busy":
@@ -44,3 +45,15 @@ class ResponseTimingEngine:
         if pending_messages > 1:
             delay *= .85
         return delay
+
+    @staticmethod
+    def _emotion_modifier(state) -> float:
+        """Small backend-owned pacing influence; never replaces timing rails."""
+        if not state:
+            return 1.0
+        # Legacy callers retain their historical conversation-interest rule.
+        if "conversation_interest" in state:
+            return .8 if state["conversation_interest"] > .75 else 1.0
+        positive = (state.get("warmth", .65) - .65) + (state.get("curiosity", .55) - .55) + (state.get("social_need", .45) - .45)
+        friction = state.get("fatigue", .25) - .25 + state.get("irritation", .05) - .05 + state.get("hurt", .02) - .02 + state.get("anxiety", .10) - .10
+        return max(.85, min(1.15, 1 - positive * .18 + friction * .14))

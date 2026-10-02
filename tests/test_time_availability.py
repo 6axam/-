@@ -76,6 +76,16 @@ def test_college_and_real_event_change_backend_delay_only():
     assert timing.delay("normal", active_conversation=True, event_availability="away") == 30.5
 
 
+def test_emotional_timing_modifier_is_bounded_and_does_not_override_active_caps():
+    timing = ResponseTimingEngine(active_reply_min_seconds=1, active_reply_max_seconds=10)
+    eager = {"warmth": 1, "curiosity": 1, "social_need": 1, "fatigue": 0, "irritation": 0, "hurt": 0, "anxiety": 0}
+    drained = {"warmth": 0, "curiosity": 0, "social_need": 0, "fatigue": 1, "irritation": 1, "hurt": 1, "anxiety": 1}
+    neutral = timing.delay("normal")
+    assert neutral * .85 <= timing.delay("normal", eager) <= neutral
+    assert neutral <= timing.delay("normal", drained) <= neutral * 1.15
+    assert 1 <= timing.delay("normal", eager, active_conversation=True) <= 10
+
+
 async def test_recent_assistant_timestamp_controls_shared_active_window(tmp_path):
     db = await make_db(tmp_path)
     await db.record_message(chat_id=10, telegram_message_id=1, sender="assistant", kind="text", text="hey")
