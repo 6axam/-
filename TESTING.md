@@ -62,6 +62,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 188 passed | 8.84 s | — | Full suite after Luna emotional-continuity integration. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_time_availability.py tests/test_lifecycle_initiative.py tests/test_presence_replies.py tests/test_delayed_cancellation.py -q` | 45 passed | 5.06 s | — | Bounded emotional pacing and spontaneous-initiative behaviour under existing safety rails. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 190 passed | 8.99 s | — | Full suite after emotional behaviour modifiers. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_emotions.py tests/test_emotion_lifecycle.py tests/test_context_budget.py -q` | 16 passed | 0.63 s | — | Episodic snapshot, open-loop, safe resolution and supersession checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 192 passed | 9.16 s | — | Full suite after episodic continuity memory. |
 
 ## Maintenance rule
 

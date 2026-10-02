@@ -5,7 +5,7 @@ from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTi
 log = logging.getLogger(__name__)
 
 class ConversationManager:
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
@@ -13,6 +13,7 @@ class ConversationManager:
         self.memory_extractor = memory_extractor
         self.memory_manager = memory_manager
         self.emotion_engine = emotion_engine
+        self.episodic_memory = episodic_memory
         self.self_life, self.timezone_name = self_life, timezone_name
         self.bedtime_ritual_enabled, self.bedtime_window_minutes = bedtime_ritual_enabled, bedtime_window_minutes
         self.initiative_scheduler = None
@@ -230,7 +231,9 @@ class ConversationManager:
         if self.personality:
             await self.personality.apply(response.self_updates, turn_id)
         if self.emotion_engine and not provider_failed:
-            await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
+            current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
+            if self.episodic_memory:
+                await self.episodic_memory.apply(chat_id, response.memory_episode, current_emotions, generation_id=generation, message_id=target_message_id, exposed_ids=set(breakdown.get('retrieved_episode_ids', [])))
         elif self.emotional_state:
             await self.emotional_state.apply(response.emotional_update)
         if self.lifecycle:

@@ -319,6 +319,12 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS episodic_memories (
+      id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, reflection TEXT NOT NULL DEFAULT '', importance REAL NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL DEFAULT 'active', unresolved INTEGER NOT NULL DEFAULT 0, emotion_snapshot TEXT NOT NULL, source_generation_id TEXT, source_message_id INTEGER, superseded_by INTEGER, resolved_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_episodic_chat_status ON episodic_memories(chat_id,status,unresolved,updated_at DESC);
+    """,
 ]
 
 

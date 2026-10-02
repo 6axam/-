@@ -20,10 +20,11 @@ class ContextBuilder:
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
                  timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
                  reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False,
-                 emotion_engine=None):
+                 emotion_engine=None, episodic_memory=None, episodic_memory_max_items: int = 6, episodic_memory_token_budget: int = 900):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.emotion_engine = emotion_engine
+        self.episodic_memory, self.episodic_memory_max_items, self.episodic_memory_token_budget = episodic_memory, episodic_memory_max_items, episodic_memory_token_budget
         self.recent_max_messages = recent_max_messages
         self.recent_token_budget = recent_token_budget
         self.target_input_tokens = target_input_tokens
@@ -128,6 +129,7 @@ class ContextBuilder:
             "personality_state": component_size(""), "emotional_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
+            "episodic_memories": component_size(""),
             "current_life_state": component_size(""),
             "delay_event_context": component_size(""),
             "bedtime_state": component_size(""),
@@ -137,6 +139,7 @@ class ContextBuilder:
         blocks = []
         retrieved_memory_ids: list[int] = []
         retrieved_life_event_ids: list[int] = []
+        retrieved_episode_ids: list[int] = []
         local = datetime.now(ZoneInfo(self.timezone_name))
         if self.self_life:
             try:
@@ -201,6 +204,15 @@ class ContextBuilder:
             except Exception:
                 # Memory must not prevent a normal conversation response.
                 log.exception("memory_retrieval_failed chat_id=%s", chat_id)
+        if self.episodic_memory:
+            episodes = await self.episodic_memory.relevant(chat_id, user_turn, self.episodic_memory_max_items)
+            lines=[]
+            for row in episodes:
+                line=f"[id={row['id']} | {'open' if row['unresolved'] else 'resolved'} | {row['kind']}] {row['summary']}"
+                if estimate_tokens('\n'.join([*lines,line])) <= self.episodic_memory_token_budget: lines.append(line); retrieved_episode_ids.append(row['id'])
+            if lines:
+                block="RELEVANT EPISODES\n"+'\n'.join(lines)+"\nUse only when natural; ids are internal."
+                blocks.append(block); components['episodic_memories']=component_size(block)
         if self.personality:
             entries = await self.personality.relevant(user_turn)
             developed = "\n".join(f"- {row['category']} / {row['subject']}: {row['value']} (strength {row['strength']:.2f})" for row in entries) or "(none yet)"
@@ -239,6 +251,7 @@ class ContextBuilder:
             "memory_token_budget": self.memory_token_budget, "memory_max_items": self.memory_max_items,
             "retrieved_memory_ids": retrieved_memory_ids,
             "retrieved_life_event_ids": retrieved_life_event_ids,
+            "retrieved_episode_ids": retrieved_episode_ids,
             "target_input_tokens": self.target_input_tokens, "components": components,
             "estimated_input_tokens": sum(part["tokens"] for part in components.values()),
         }

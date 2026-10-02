@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.3 — Episodic continuity memory
+`unreleased` · 2026-10-03
+
+Added chat-scoped episodic memories with immutable post-interaction emotional snapshots, compact open-loop retrieval, and ID-gated resolution/supersession. Episodes reuse the normal Luna response and never make another model request.
+
 ## v1.20.2 — Bounded emotional behaviour modifiers
 `unreleased` · 2026-10-03
 

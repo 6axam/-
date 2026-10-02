@@ -33,6 +33,7 @@ from app.memory.retrieval import MemoryRetrieval
 from app.self_life import SelfLifeManager
 from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 from app.emotions.engine import EmotionalEngine
+from app.episodic_memory import EpisodicMemoryManager
 
 
 def make_provider(settings):
@@ -81,6 +82,7 @@ async def main():
     from app.character.manager import PersonalityManager
     personality, emotional_state = PersonalityManager(db), None
     emotion_engine = EmotionalEngine(db, s.timezone)
+    episodic_memory = EpisodicMemoryManager(db)
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
     self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
@@ -102,7 +104,7 @@ async def main():
                              self_life_max_items=s.self_life_context_max_items,
                              timezone_name=s.timezone, sticker_tendency=s.sticker_tendency,
                              reaction_tendency=s.reaction_tendency, voice_message_tendency=s.voice_message_tendency,
-                             voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine)
+                             voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine, episodic_memory=episodic_memory)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,
@@ -111,7 +113,7 @@ async def main():
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
                                   self_life=self_life, timezone_name=s.timezone, bedtime_ritual_enabled=s.bedtime_ritual_enabled,
-                                  bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine)
+                                  bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory)
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
 
     async def on_messages_read(record):

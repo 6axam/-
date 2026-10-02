@@ -128,6 +128,17 @@ class EmotionDelta(BaseModel):
     def values(self) -> dict[str, float]:
         return {name: value for name, value in self.model_dump().items() if value is not None}
 
+class MemoryEpisode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["shared_event", "anya_experience", "user_update", "relationship", "opinion_change", "open_loop"]
+    summary: str = Field(min_length=1, max_length=600)
+    reflection: str = Field(default="", max_length=500)
+    importance: float = Field(default=.5, ge=0, le=1)
+    confidence: float = Field(default=.7, ge=0, le=1)
+    unresolved: bool = False
+    resolve_episode_ids: list[int] = Field(default_factory=list, max_length=4)
+    supersede_episode_id: int | None = Field(default=None, gt=0)
+
 
 class ResponseTiming(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -199,6 +210,7 @@ class LLMResponse(BaseModel):
     spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotion_delta: EmotionDelta = Field(default_factory=EmotionDelta)
+    memory_episode: MemoryEpisode | None = None
     # Kept temporarily for backwards-compatible validation of old persisted
     # fixtures; the application no longer applies this global singleton state.
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
