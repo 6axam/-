@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.5 — Flexible canonical image reference
+`unreleased` · 2026-10-03
+
+The canonical reference now guides identity while allowing the generation prompt to vary expression, pose, clothing, camera and scene. Appearance guidance uses a subtle neutral smile so a distinctive reference expression is not copied mechanically.
+
 ## v1.20.4 — Expanded stable conversation context
 `unreleased` · 2026-10-03
 

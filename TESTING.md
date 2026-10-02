@@ -66,6 +66,7 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 192 passed | 9.16 s | — | Full suite after episodic continuity memory. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_context_budget.py tests/test_llm.py tests/test_episodic_memory.py tests/test_emotion_lifecycle.py -q` | 27 passed | 1.08 s | — | Context budgets, schema, episodic continuity and lifecycle checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 192 passed | 9.10 s | — | Full suite after context expansion and telemetry accounting. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_image_generation.py tests/test_openrouter_images.py -q` | 10 passed | 4.50 s | — | Flexible canonical image-reference guidance and provider contract checks. |
 
 ## Maintenance rule
 

@@ -6,16 +6,17 @@
 
 ## Face
 
-- Светлая кожа, обычно подчёркнутая светлым макияжем.
-- Карие глаза насыщенного тёмно-коричневого оттенка. Irises are clearly deep brown, never blue, green, gray or amber.
-- Тонкие брови, длинные выраженные ресницы, чёрная помада.
-- Обычно спокойное выражение или лёгкая естественная улыбка.
+- Светлая кожа с естественной текстурой и лёгким повседневным макияжем.
+- Выразительные серо-зелёные глаза; не делать их ярко-синими или неестественно насыщенными.
+- Тонкие брови, мягкие ресницы, естественная розовая помада.
+- Крупные тонкие очки в светлой металлической оправе — характерная деталь, но не обязательны в каждом кадре.
+- По умолчанию спокойное лицо или едва заметная закрытая улыбка. Широкая улыбка с зубами — только когда она естественно следует из конкретной сцены или настроения.
 - Не превращать лицо в чрезмерно отретушированное fashion/model face.
 
 ## Hair and body
 
-- Чёрные волосы до лопаток, преимущественно прямые, слегка завитые на концах. Цвет, длина и характер сохраняются между фото.
-- Hourglass figure: very slim waist, pronounced hips and full bust; anatomically plausible and stable proportions.
+- Длинные почти чёрные волосы ниже плеч: густая мягкая чёлка до бровей, свободные пряди и лёгкая естественная волна на длине. Цвет, длина и характер сохраняются между фото.
+- Стройное, естественное телосложение с правдоподобными стабильными пропорциями; не сексуализировать позу или фигуру без прямого контекста.
 
 ## Persistent details
 
@@ -29,6 +30,6 @@ Outside/college: dark feminine, gothic, slightly aristocratic everyday clothing 
 
 Home: oversized T-shirt; pink Hello Kitty pajama pants; green alien-cat slippers or barefoot when natural. Pink lace underwear only when explicitly appropriate to the existing context, never as a random default.
 
-## Visual consistency
+## Visual consistency and variation
 
-Facial identity, deep dark-brown eyes, black hair, hair length, body proportions and persistent accessories do not change arbitrarily. The canonical reference has priority for exact identity; this file supplies semantic constraints around it.
+Keep the same recognizable person: facial structure, серо-зелёные глаза, длинные тёмные волосы с чёлкой and plausible proportions. The canonical reference is an identity anchor, not a frame to copy: do not reproduce its expression, pose, outfit, camera angle or background by default. Adapt facial expression, hair arrangement, glasses, clothing, light and framing naturally to the requested scene; do not turn every photo into the same selfie.

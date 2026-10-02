@@ -60,6 +60,9 @@ async def test_self_photo_pipeline_persists_visual_and_image_metadata(tmp_path, 
     action=Action(type=ActionType.image,image_intent=ImageIntent(kind="casual_photo",scene="shows she is bored",importance=.5))
     await executor.execute(QueuedAction(chat_id=1,generation_id="g",action=action))
     assert "short dark hair" in provider.prompt and "OUTFIT" in provider.prompt
+    assert "Use the canonical reference only as an identity anchor." in provider.prompt
+    assert "Do not copy its expression, pose, outfit, camera angle or background" in provider.prompt
+    assert "Require dark brown eyes" not in provider.prompt
     assert (await db.fetchone("SELECT status FROM generated_images"))["status"] == "sent"
     await db.close()
 
