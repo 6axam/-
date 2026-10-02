@@ -42,10 +42,32 @@ async def test_elapsed_time_moves_state_toward_baseline_and_raises_absence_need(
 
 
 @pytest.mark.asyncio
-async def test_advance_is_idempotent_for_same_clock_and_uses_local_night(engine):
+async def test_sleep_recovers_fatigue_and_advance_is_idempotent(engine):
     at_night = datetime(2026, 1, 1, 23, tzinfo=timezone.utc)
-    await engine.get(10, now=at_night)
+    await engine.apply_delta(10, {"fatigue": .12, "warmth": .05}, now=at_night)
     first = await engine.advance(10, now=at_night + timedelta(hours=4), sleeping=True)
     second = await engine.advance(10, now=at_night + timedelta(hours=4), sleeping=True)
     assert first == second
-    assert first.fatigue > .25
+    assert first.fatigue < .25
+    assert first.warmth > .65
+
+
+@pytest.mark.asyncio
+async def test_awake_late_night_raises_fatigue_and_sleeping_lowers_it(engine):
+    start = datetime(2026, 1, 1, 23, tzinfo=timezone.utc)
+    await engine.get(10, now=start)
+    awake = await engine.advance(10, now=start + timedelta(hours=4), sleeping=False)
+    assert awake.fatigue > .25
+    asleep = await engine.advance(10, now=start + timedelta(hours=8), sleeping=True)
+    assert asleep.fatigue < awake.fatigue
+
+
+@pytest.mark.asyncio
+async def test_sleep_recovery_is_consistent_across_time_chunks(engine):
+    start = datetime(2026, 1, 1, 23, tzinfo=timezone.utc)
+    await engine.apply_delta(10, {"fatigue": .12}, now=start)
+    one_step = await engine.advance(10, now=start + timedelta(hours=6), sleeping=True)
+    await engine.apply_delta(20, {"fatigue": .12}, now=start)
+    await engine.advance(20, now=start + timedelta(hours=3), sleeping=True)
+    two_steps = await engine.advance(20, now=start + timedelta(hours=6), sleeping=True)
+    assert one_step.fatigue == pytest.approx(two_steps.fatigue, abs=.03)

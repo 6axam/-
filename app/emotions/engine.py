@@ -71,10 +71,12 @@ class EmotionalEngine:
         # Absence creates only a modest wish for contact, capped and reversible.
         absence_gain = min(.18, elapsed_hours * .006)
         values["social_need"] = clamp(values["social_need"] + absence_gain)
-        # Fatigue is a deterministic rhythm layered over decay, never a free LLM label.
-        night_target = .78 if local_hour >= 23 or local_hour < 7 or sleeping else .25
-        fatigue_factor = 1 - math.exp(-elapsed_hours / 3.0)
-        values["fatigue"] = clamp(values["fatigue"] + (night_target - values["fatigue"]) * fatigue_factor)
+        # Sleep restores fatigue; being awake late at night raises it. These
+        # are intentionally separate targets, layered after ordinary decay.
+        fatigue_target = .10 if sleeping else (.78 if local_hour >= 23 or local_hour < 7 else .25)
+        fatigue_hours = 2.5 if sleeping else 3.0
+        fatigue_factor = 1 - math.exp(-elapsed_hours / fatigue_hours)
+        values["fatigue"] = clamp(values["fatigue"] + (fatigue_target - values["fatigue"]) * fatigue_factor)
         return state.with_values(values)
 
     async def advance(self, chat_id: int, *, now: datetime | None = None, sleeping: bool = False) -> EmotionalState:

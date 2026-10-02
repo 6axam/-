@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.6 — Emotional sleep recovery
+`unreleased` · 2026-10-03
+
+Sleep now deterministically restores fatigue toward a low recovery target, while late-night wakefulness remains a separate source of fatigue.
+
 ## v1.20.5 — Flexible canonical image reference
 `unreleased` · 2026-10-03
 
