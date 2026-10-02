@@ -117,6 +117,21 @@ class ResponseTiming(BaseModel):
     urgency: Literal["urgent", "normal", "low"] = "normal"
 
 
+class BedtimeAdjustment(BaseModel):
+    """A one-night delay requested directly by the conversation owner."""
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["none", "delay_once"] = "none"
+    delay_minutes: int = Field(default=0, ge=0, le=240)
+
+    @model_validator(mode="after")
+    def valid_delay(self):
+        if self.mode == "none" and self.delay_minutes:
+            raise ValueError("no bedtime adjustment must use zero delay")
+        if self.mode == "delay_once" and not 15 <= self.delay_minutes <= 240:
+            raise ValueError("bedtime delay must be between 15 and 240 minutes")
+        return self
+
+
 class ConversationMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
     conversation_status: Literal["active", "cooling_down", "ended"] = "active"
@@ -167,4 +182,5 @@ class LLMResponse(BaseModel):
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
     response_timing: ResponseTiming = Field(default_factory=ResponseTiming)
+    bedtime_adjustment: BedtimeAdjustment = Field(default_factory=BedtimeAdjustment)
     conversation: ConversationMetadata = Field(default_factory=ConversationMetadata)

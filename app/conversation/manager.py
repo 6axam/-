@@ -153,7 +153,8 @@ class ConversationManager:
             return generation
         life_state = await self.presence.state(chat_id) if self.presence else None
         if bedtime_state is None and self.presence and self.bedtime_ritual_enabled:
-            bedtime_state = self.presence.bedtime_state(window_minutes=self.bedtime_window_minutes)
+            state_for = getattr(self.presence, "bedtime_state_for", None)
+            bedtime_state = await state_for(chat_id, window_minutes=self.bedtime_window_minutes) if state_for else self.presence.bedtime_state(window_minutes=self.bedtime_window_minutes)
             if bedtime_state["bedtime_window"]:
                 bedtime_state["already_said_goodnight"] = await self.context.db.bedtime_done(chat_id, bedtime_state["local_day"])
         self_life_gate_open = bool(self.self_life and (not life_state or life_state.get("availability") != "sleep") and self.self_life.continuation_gate())
@@ -199,6 +200,13 @@ class ConversationManager:
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale LLM response for generation %s", generation)
             return generation
+        adjustment = response.bedtime_adjustment
+        if adjustment.mode == "delay_once" and self.presence and not provider_failed:
+            try:
+                plan = await self.presence.delay_next_bedtime(chat_id, adjustment.delay_minutes)
+                log.info("bedtime_delayed_by_owner chat_id=%s delay_minutes=%s sleep_at=%s", chat_id, adjustment.delay_minutes, plan["sleep_at"])
+            except Exception:
+                log.exception("bedtime_delay_persistence_failed chat_id=%s", chat_id)
         response.actions = await self._validate_action_targets(chat_id, response.actions, target_message_id)
         if self.splitter:
             response.actions = self.splitter.split_actions(response.actions)

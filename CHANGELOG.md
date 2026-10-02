@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.19 — One-time later bedtime
+`unreleased` · 2026-10-03
+
+Anya can now postpone one upcoming sleep episode after Maxim explicitly asks her to stay awake later. The delay is persisted per chat/night, survives restarts, affects bedtime behavior, and automatically returns to the normal schedule after that night.
+
 ## v1.18 — OpenRouter Seed Audio delivery
 `unreleased` · 2026-10-01
 

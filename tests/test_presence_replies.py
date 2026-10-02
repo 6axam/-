@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from app.actions.models import Action, ActionType, QueuedAction
 from app.conversation.manager import ConversationManager
 from app.database.db import Database
+from app.llm.schemas import LLMResponse
 from app.presence import DailyPresenceManager
 from app.telegram.executor import TelegramActionExecutor
 
@@ -91,6 +92,49 @@ def test_bedtime_window_is_only_the_short_interval_before_sleep(tmp_path):
     asleep = presence.bedtime_state(datetime(2026, 10, 2, 1, 5, tzinfo=timezone.utc), 20)
     assert inside["bedtime_window"] and inside["minutes_until_sleep"] == 15
     assert not outside["bedtime_window"] and not asleep["bedtime_window"]
+
+
+async def test_owner_requested_later_bedtime_is_persistent_and_one_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(DailyPresenceManager, "_wake_jitter", staticmethod(lambda *_: 0))
+    path = tmp_path / "bedtime-delay.sqlite"
+    db = Database(f"sqlite:///{path}"); await db.connect()
+    presence = DailyPresenceManager(db, "UTC", sleep_start=1, wake_hour=7)
+    plan = await presence.delay_next_bedtime(7, 120, datetime(2026, 10, 2, 0, 30, tzinfo=timezone.utc))
+    assert plan == {"sleep_start_date": "2026-10-02", "sleep_at": "2026-10-02 03:00"}
+    assert (await presence.state(7, datetime(2026, 10, 2, 1, 30, tzinfo=timezone.utc)))["availability"] == "available"
+    assert (await presence.state(7, datetime(2026, 10, 2, 3, 5, tzinfo=timezone.utc)))["availability"] == "sleep"
+    await db.close()
+    db = Database(f"sqlite:///{path}"); await db.connect()
+    restored = DailyPresenceManager(db, "UTC", sleep_start=1, wake_hour=7)
+    assert (await restored.state(7, datetime(2026, 10, 3, 1, 5, tzinfo=timezone.utc)))["availability"] == "sleep"
+    await db.close()
+
+
+async def test_conversation_applies_direct_bedtime_delay_from_structured_response():
+    class Provider:
+        async def generate(self, _request):
+            return LLMResponse.model_validate({
+                "actions": [{"type": "text", "text": "ладно"}],
+                "bedtime_adjustment": {"mode": "delay_once", "delay_minutes": 90},
+            })
+
+    class Presence:
+        async def state(self, _chat_id): return {"availability": "available"}
+        async def delay_next_bedtime(self, chat_id, delay):
+            self.saved = (chat_id, delay)
+            return {"sleep_at": "2026-10-02 02:30"}
+
+    class Queue:
+        executor = SimpleNamespace()
+        async def enqueue_many(self, chat_id, generation, actions): self.sent = (chat_id, generation, actions)
+
+    async def build(*_args): return "system", "context"
+    presence, queue = Presence(), Queue()
+    manager = ConversationManager(Provider(), SimpleNamespace(build=build), queue, presence=presence)
+    manager.generations[10] = "g"
+    await manager._generate(1, 10, "ляг позже", "g")
+    assert presence.saved == (10, 90)
+    assert queue.sent[2][0].text == "ладно"
 
 
 async def test_invalid_reply_target_is_removed_but_real_target_survives(tmp_path):

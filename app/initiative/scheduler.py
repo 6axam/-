@@ -33,7 +33,11 @@ class InitiativeScheduler:
         daily_state = await self.presence.state(chat_id) if self.presence else {"availability": "available", "event": None}
         blocked = await self._safety_block(chat_id, daily_state)
         if blocked: return False, blocked, state
-        bedtime = self.presence.bedtime_state(window_minutes=getattr(self.settings, "bedtime_window_minutes", 20)) if self.presence and getattr(self.settings, "bedtime_ritual_enabled", False) else None
+        if self.presence and getattr(self.settings, "bedtime_ritual_enabled", False):
+            state_for = getattr(self.presence, "bedtime_state_for", None)
+            bedtime = await state_for(chat_id, window_minutes=getattr(self.settings, "bedtime_window_minutes", 20)) if state_for else self.presence.bedtime_state(window_minutes=getattr(self.settings, "bedtime_window_minutes", 20))
+        else:
+            bedtime = None
         if bedtime and bedtime["bedtime_window"]:
             if await self.db.bedtime_done(chat_id, bedtime["local_day"]): return False, "bedtime_already_done", state
             if self.rng() >= getattr(self.settings, "bedtime_initiative_probability", .65): return False, "bedtime_gate_closed", state

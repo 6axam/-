@@ -29,7 +29,7 @@ class DailyPresenceManager:
             return self.college_start_hour <= hour < self.college_end_hour
         return hour >= self.college_start_hour or hour < self.college_end_hour
 
-    def _sleep_episode(self, chat_id: int, local: datetime) -> tuple[datetime, datetime] | None:
+    def _sleep_episode(self, chat_id: int, local: datetime, delay_minutes: int = 0) -> tuple[datetime, datetime] | None:
         """Return the active/surrounding episode's start and jittered wake.
 
         The jitter is keyed to the wake date.  That keeps a 23:00→07:00
@@ -46,7 +46,7 @@ class DailyPresenceManager:
         else:
             start_date = local.date()
             wake_date = start_date
-        start = datetime.combine(start_date, start_time, tzinfo=self.zone)
+        start = datetime.combine(start_date, start_time, tzinfo=self.zone) + timedelta(minutes=delay_minutes)
         wake = datetime.combine(wake_date, wake_time, tzinfo=self.zone)
         wake += timedelta(minutes=self._wake_jitter(chat_id, wake_date.isoformat()))
         return start, wake
@@ -54,7 +54,9 @@ class DailyPresenceManager:
     async def state(self, chat_id: int, now: datetime | None = None):
         now = now or datetime.now(timezone.utc)
         local = now.astimezone(self.zone)
-        episode = self._sleep_episode(chat_id, local)
+        base_episode = self._sleep_episode(chat_id, local)
+        delay = await self.db.bedtime_delay_minutes(chat_id, base_episode[0].date().isoformat()) if base_episode else 0
+        episode = self._sleep_episode(chat_id, local, delay)
         sleeping = bool(episode and episode[0] <= local < episode[1])
         wake = episode[1] if sleeping and episode else None
         day = local.date().isoformat()
@@ -92,11 +94,33 @@ class DailyPresenceManager:
         start = datetime.combine(now.date(), time(self.sleep_start), tzinfo=self.zone)
         if now >= start:
             start += timedelta(days=1)
+        return self._bedtime_state(now, start, window_minutes)
+
+    async def bedtime_state_for(self, chat_id: int, now: datetime | None = None, window_minutes: int = 20) -> dict:
+        """Bedtime state with the direct one-night delay, if one was saved."""
+        now = (now or datetime.now(timezone.utc)).astimezone(self.zone)
+        start = datetime.combine(now.date(), time(self.sleep_start), tzinfo=self.zone)
+        if now >= start:
+            start += timedelta(days=1)
+        delay = await self.db.bedtime_delay_minutes(chat_id, start.date().isoformat())
+        return self._bedtime_state(now, start + timedelta(minutes=delay), window_minutes)
+
+    def _bedtime_state(self, now: datetime, start: datetime, window_minutes: int) -> dict:
         minutes = max(0, int((start - now).total_seconds() // 60))
         return {"bedtime_window": 0 < (start - now).total_seconds() <= window_minutes * 60,
                 "sleep_soon": 0 < (start - now).total_seconds() <= window_minutes * 60,
                 "minutes_until_sleep": minutes, "local_time": now.strftime("%Y-%m-%d %H:%M"),
                 "local_day": now.date().isoformat()}
+
+    async def delay_next_bedtime(self, chat_id: int, delay_minutes: int, now: datetime | None = None) -> dict:
+        """Replace the next episode's delay; it never changes the default schedule."""
+        now = (now or datetime.now(timezone.utc)).astimezone(self.zone)
+        start = datetime.combine(now.date(), time(self.sleep_start), tzinfo=self.zone)
+        if now >= start:
+            start += timedelta(days=1)
+        await self.db.set_bedtime_delay(chat_id, start.date().isoformat(), delay_minutes)
+        delayed = start + timedelta(minutes=delay_minutes)
+        return {"sleep_start_date": start.date().isoformat(), "sleep_at": delayed.strftime("%Y-%m-%d %H:%M")}
 
     @staticmethod
     def allows_delayed_reply(state: dict) -> bool:

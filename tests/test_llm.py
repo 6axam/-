@@ -24,6 +24,13 @@ def test_structured_response_validation():
         LLMResponse.model_validate_json('{"actions":[{"type":"text"}]}')
 
 
+def test_bedtime_delay_requires_a_real_one_time_delay():
+    response = LLMResponse.model_validate_json('{"actions":[],"bedtime_adjustment":{"mode":"delay_once","delay_minutes":60}}')
+    assert response.bedtime_adjustment.delay_minutes == 60
+    with pytest.raises(ValidationError):
+        LLMResponse.model_validate_json('{"actions":[],"bedtime_adjustment":{"mode":"delay_once","delay_minutes":0}}')
+
+
 async def test_provider_repairs_broken_json_once():
     calls = 0
     payloads = []

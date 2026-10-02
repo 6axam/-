@@ -288,6 +288,17 @@ MIGRATIONS = [
         PRIMARY KEY(chat_id, local_day)
     );
     """,
+    """
+    -- A direct request may postpone exactly one upcoming sleep episode.
+    -- The date is the local date on which that episode normally begins.
+    CREATE TABLE IF NOT EXISTS bedtime_overrides (
+        chat_id INTEGER NOT NULL,
+        sleep_start_date TEXT NOT NULL,
+        delay_minutes INTEGER NOT NULL CHECK(delay_minutes BETWEEN 15 AND 240),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(chat_id, sleep_start_date)
+    );
+    """,
 ]
 
 
@@ -502,6 +513,20 @@ class Database:
 
     async def record_bedtime(self, chat_id: int, local_day: str, source: str) -> None:
         await self.execute("INSERT OR IGNORE INTO bedtime_history(chat_id,local_day,source) VALUES(?,?,?)", (chat_id, local_day, source))
+
+    async def bedtime_delay_minutes(self, chat_id: int, sleep_start_date: str) -> int:
+        row = await self.fetchone(
+            "SELECT delay_minutes FROM bedtime_overrides WHERE chat_id=? AND sleep_start_date=?",
+            (chat_id, sleep_start_date),
+        )
+        return row["delay_minutes"] if row else 0
+
+    async def set_bedtime_delay(self, chat_id: int, sleep_start_date: str, delay_minutes: int) -> None:
+        await self.execute(
+            "INSERT INTO bedtime_overrides(chat_id,sleep_start_date,delay_minutes) VALUES(?,?,?) "
+            "ON CONFLICT(chat_id,sleep_start_date) DO UPDATE SET delay_minutes=excluded.delay_minutes,created_at=CURRENT_TIMESTAMP",
+            (chat_id, sleep_start_date, delay_minutes),
+        )
 
     async def import_sticker_pack(self, *, name: str, title: str, stickers: list[tuple[str, str, str, str]], current_unique_id: str | None) -> int:
         """One SQLite transaction for a whole pack; returns number of newly queued jobs."""

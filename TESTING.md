@@ -50,6 +50,8 @@ git diff --check
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 174 passed | 6.02 s | 7.18 s | Full suite after direct voice-request policy fix. |
 | 2026-10-01 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_llm.py tests/test_response_prompt.py -q` | 27 passed | 3.25 s | — | OpenRouter Seed payload, key-resolution, MP3 executor and capability contracts. |
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 178 passed | 5.44 s | — | Full suite after replacing the direct BytePlus voice path with OpenRouter Seed Audio. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_presence_replies.py tests/test_llm.py tests/test_response_prompt.py -q` | 29 passed | 4.69 s | — | One-time owner-requested bedtime delay, schema and compact-prompt checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 181 passed | 8.49 s | — | Full suite after one-time later-bedtime support. |
 
 ## Maintenance rule
 
