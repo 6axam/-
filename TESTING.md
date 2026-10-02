@@ -64,6 +64,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 190 passed | 8.99 s | — | Full suite after emotional behaviour modifiers. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_emotions.py tests/test_emotion_lifecycle.py tests/test_context_budget.py -q` | 16 passed | 0.63 s | — | Episodic snapshot, open-loop, safe resolution and supersession checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 192 passed | 9.16 s | — | Full suite after episodic continuity memory. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_context_budget.py tests/test_llm.py tests/test_episodic_memory.py tests/test_emotion_lifecycle.py -q` | 27 passed | 1.08 s | — | Context budgets, schema, episodic continuity and lifecycle checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 192 passed | 9.10 s | — | Full suite after context expansion and telemetry accounting. |
 
 ## Maintenance rule
 

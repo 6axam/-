@@ -104,7 +104,9 @@ async def main():
                              self_life_max_items=s.self_life_context_max_items,
                              timezone_name=s.timezone, sticker_tendency=s.sticker_tendency,
                              reaction_tendency=s.reaction_tendency, voice_message_tendency=s.voice_message_tendency,
-                             voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine, episodic_memory=episodic_memory)
+                             voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
+                             episodic_memory_token_budget=s.episodic_memory_context_token_budget,
+                             episodic_memory_max_items=s.episodic_memory_max_context_items)
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,

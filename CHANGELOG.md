@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.4 — Expanded stable conversation context
+`unreleased` · 2026-10-03
+
+Raised the soft input-context target to 14k tokens, enlarged recent history, and added bounded episodic-context settings. Prompt telemetry now includes emotional and voice policy blocks so the component estimate covers the assembled request more faithfully.
+
 ## v1.20.3 — Episodic continuity memory
 `unreleased` · 2026-10-03
 

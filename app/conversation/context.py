@@ -124,6 +124,7 @@ class ContextBuilder:
             "character_prompt": component_size(character), "life_background": component_size(life_background),
             "user_profile": component_size(profile),
             "response_instructions": component_size(response), "memory_policy": component_size(memory_policy),
+            "emotion_policy": component_size(emotion_policy),
             "action_tendencies": component_size(action_tendencies),
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
@@ -136,6 +137,7 @@ class ContextBuilder:
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
             "request_wrapper": component_size("\n\nUSER TURN:\n"),
         }
+        components["voice_policy"] = component_size(read_prompt("voice_message.md") if self.voice_message_available else "VOICE MESSAGE AVAILABILITY\nVoice messaging is unavailable. Do not choose voice_message.")
         blocks = []
         retrieved_memory_ids: list[int] = []
         retrieved_life_event_ids: list[int] = []
@@ -249,6 +251,7 @@ class ContextBuilder:
             "chat_id": chat_id, "history_messages": len(selected_history),
             "history_token_budget": self.recent_token_budget, "history_max_messages": self.recent_max_messages,
             "memory_token_budget": self.memory_token_budget, "memory_max_items": self.memory_max_items,
+            "episodic_memory_token_budget": self.episodic_memory_token_budget, "episodic_memory_max_items": self.episodic_memory_max_items,
             "retrieved_memory_ids": retrieved_memory_ids,
             "retrieved_life_event_ids": retrieved_life_event_ids,
             "retrieved_episode_ids": retrieved_episode_ids,

@@ -24,4 +24,4 @@ cp .env.example .env
 - OpenAI/OpenRouter-compatible provider с timeout, retry временных ошибок и одной попыткой repair сломанного JSON;
 - pytest unit и offline integration tests без реальных Telegram/LLM credentials.
 
-Память, summaries, stickers и инициативность намеренно не входят в этот этап.
+Проект включает компактную память о пользователе, эпизодическую continuity-память с незакрытыми темами, стикеры и безопасную инициативность. Эмоциональное состояние сохраняется отдельно для каждого чата и влияет на тон только в ограниченных backend-рамках.
