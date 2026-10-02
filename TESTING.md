@@ -52,6 +52,12 @@ git diff --check
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 178 passed | 5.44 s | — | Full suite after replacing the direct BytePlus voice path with OpenRouter Seed Audio. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_presence_replies.py tests/test_llm.py tests/test_response_prompt.py -q` | 29 passed | 4.69 s | — | One-time owner-requested bedtime delay, schema and compact-prompt checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 181 passed | 8.49 s | — | Full suite after one-time later-bedtime support. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_image_generation.py tests/test_openrouter_images.py -q` | 10 passed | 4.35 s | — | Reference-identity prompt and OpenRouter image-reference checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 181 passed | 8.38 s | — | Full suite after canonical appearance-prompt update. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_image_generation.py tests/test_openrouter_images.py -q` | 10 passed | 2.87 s | — | Flexible reference-identity and image provider contract checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 181 passed | 6.03 s | — | Full suite after neutral-expression reference guidance. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_emotions.py -q` | 4 passed | 0.12 s | — | Per-chat baseline, bounded sparse deltas, deterministic decay and fatigue checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 185 passed | 8.88 s | — | Full suite after persistent emotional-engine foundation. |
 
 ## Maintenance rule
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.0 — Persistent emotional continuity foundation
+`unreleased` · 2026-10-03
+
+Added a deterministic, bounded, per-chat emotional-state engine and SQLite migration. It starts from one canonical baseline, safely applies sparse backend-capped deltas, and evolves through elapsed time without model calls. Application behaviour is intentionally unchanged until the next integration phase.
+
 ## v1.19 — One-time later bedtime
 `unreleased` · 2026-10-03
 

@@ -299,6 +299,26 @@ MIGRATIONS = [
         PRIMARY KEY(chat_id, sleep_start_date)
     );
     """,
+    """
+    -- Emotional continuity is per Telegram chat; the legacy singleton remains
+    -- untouched for migration safety and will be retired by application wiring.
+    CREATE TABLE IF NOT EXISTS emotional_states (
+        chat_id INTEGER PRIMARY KEY,
+        warmth REAL NOT NULL CHECK(warmth >= 0 AND warmth <= 1),
+        trust REAL NOT NULL CHECK(trust >= 0 AND trust <= 1),
+        joy REAL NOT NULL CHECK(joy >= 0 AND joy <= 1),
+        sadness REAL NOT NULL CHECK(sadness >= 0 AND sadness <= 1),
+        irritation REAL NOT NULL CHECK(irritation >= 0 AND irritation <= 1),
+        hurt REAL NOT NULL CHECK(hurt >= 0 AND hurt <= 1),
+        anxiety REAL NOT NULL CHECK(anxiety >= 0 AND anxiety <= 1),
+        fatigue REAL NOT NULL CHECK(fatigue >= 0 AND fatigue <= 1),
+        curiosity REAL NOT NULL CHECK(curiosity >= 0 AND curiosity <= 1),
+        social_need REAL NOT NULL CHECK(social_need >= 0 AND social_need <= 1),
+        last_interaction_at TEXT NOT NULL,
+        last_advanced_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 
