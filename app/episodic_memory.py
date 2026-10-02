@@ -8,16 +8,20 @@ class EpisodicMemoryManager:
         rows = await self.db.fetchall("SELECT * FROM episodic_memories WHERE chat_id=? AND status='active' ORDER BY updated_at DESC,id DESC LIMIT 100", (chat_id,))
         ranked=[]
         for r in rows:
-            score=_lexical_overlap(query,r['summary']) + r['importance']*.12 + r['unresolved']*.10
-            if score>.04: ranked.append((score,r))
+            relevance=_lexical_overlap(query, r['summary']+' '+r['reflection'])
+            # Importance/confidence are tie-breakers, never a substitute for
+            # topical relevance. Open loops get only a small lower threshold.
+            threshold=.035 if r['unresolved'] else .08
+            if relevance < threshold: continue
+            score=relevance + r['importance']*.08 + r['confidence']*.05 + r['unresolved']*.05
+            ranked.append((score,r))
         return [r for _,r in sorted(ranked,key=lambda v:(v[0],v[1]['id']),reverse=True)[:limit]]
-    async def apply(self, chat_id, episode, state, *, generation_id=None, message_id=None, exposed_ids=frozenset()):
-        if not episode: return None
-        for ident in episode.resolve_episode_ids:
+    async def apply(self, chat_id, episode, state, *, resolve_episode_ids=(), generation_id=None, message_id=None, exposed_ids=frozenset()):
+        for ident in resolve_episode_ids:
             if ident in exposed_ids:
                 await self.db.execute("UPDATE episodic_memories SET unresolved=0,resolved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND chat_id=? AND status='active'",(ident,chat_id)); log.info("episodic_memory_resolved chat_id=%s id=%s",chat_id,ident)
             else: log.debug("episodic_memory_invalid_resolve chat_id=%s id=%s",chat_id,ident)
-        if episode.importance < .35 and not episode.unresolved: return None
+        if not episode or (episode.importance < .35 and not episode.unresolved): return None
         snap=json.dumps(state.values(),sort_keys=True,separators=(',',':'))
         result=await self.db.execute("INSERT INTO episodic_memories(chat_id,kind,summary,reflection,importance,confidence,unresolved,emotion_snapshot,source_generation_id,source_message_id) VALUES(?,?,?,?,?,?,?,?,?,?)",(chat_id,episode.kind,episode.summary.strip(),episode.reflection.strip(),episode.importance,episode.confidence,int(episode.unresolved),snap,generation_id,message_id))
         if episode.supersede_episode_id in exposed_ids:

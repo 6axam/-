@@ -69,6 +69,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_image_generation.py tests/test_openrouter_images.py -q` | 10 passed | 4.50 s | — | Flexible canonical image-reference guidance and provider contract checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_emotions.py tests/test_presence_replies.py tests/test_time_availability.py -q` | 32 passed | 4.96 s | — | Sleep recovery, night wakefulness, presence and timing checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 194 passed | 7.77 s | — | Full suite after emotional sleep-recovery fix. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_emotion_lifecycle.py tests/test_context_budget.py tests/test_llm.py -q` | 28 passed | 1.05 s | — | Episodic relevance, standalone resolution, context and schema checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.24 s | — | Full suite after episodic retrieval and guidance refinement. |
 
 ## Maintenance rule
 

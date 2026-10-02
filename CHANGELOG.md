@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.7 — Episodic memory relevance and guidance
+`unreleased` · 2026-10-03
+
+Episodic retrieval now requires topical relevance, while confidence and open-loop state only refine ranking. Luna receives explicit episode guidance, compact reflections, and can resolve an exposed episode without inventing a replacement.
+
 ## v1.20.6 — Emotional sleep recovery
 `unreleased` · 2026-10-03
 

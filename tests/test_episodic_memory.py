@@ -10,10 +10,17 @@ async def test_episode_snapshot_open_loop_and_safe_resolution(tmp_path):
  db=Database(f"sqlite:///{tmp_path/'e.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); state=EmotionalState(warmth=.8)
  ident=await m.apply(1,MemoryEpisode(kind='open_loop',summary='Надо проверить голос',importance=.7,unresolved=True),state)
  row=await db.fetchone('SELECT * FROM episodic_memories WHERE id=?',(ident,)); assert row['unresolved'] and json.loads(row['emotion_snapshot'])['warmth']==.8
- await m.apply(1,MemoryEpisode(kind='shared_event',summary='неважно',importance=.7,resolve_episode_ids=[999]),state,exposed_ids={ident})
+ await m.apply(1,None,state,resolve_episode_ids=[999],exposed_ids={ident})
  assert (await db.fetchone('SELECT unresolved FROM episodic_memories WHERE id=?',(ident,)))['unresolved'] == 1
- await m.apply(1,MemoryEpisode(kind='shared_event',summary='готово',importance=.7,resolve_episode_ids=[ident]),state,exposed_ids={ident})
+ await m.apply(1,None,state,resolve_episode_ids=[ident],exposed_ids={ident})
  assert (await db.fetchone('SELECT unresolved FROM episodic_memories WHERE id=?',(ident,)))['unresolved'] == 0
+ await db.close()
+
+@pytest.mark.asyncio
+async def test_unrelated_important_episodes_do_not_bypass_relevance(tmp_path):
+ db=Database(f"sqlite:///{tmp_path/'e.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); s=EmotionalState()
+ for index in range(10): await m.apply(1,MemoryEpisode(kind='shared_event',summary=f'важный проект {index}',importance=1,confidence=1),s)
+ assert await m.relevant(1,'привет') == []
  await db.close()
 
 @pytest.mark.asyncio

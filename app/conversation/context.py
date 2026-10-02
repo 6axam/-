@@ -113,8 +113,9 @@ class ContextBuilder:
         )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
         emotion_policy = read_prompt("emotional_state.md")
+        episodic_policy = read_prompt("episodic_memory.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
-        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + emotion_policy + "\n\n" + media_rule
+        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + episodic_policy + "\n\n" + emotion_policy + "\n\n" + media_rule
         if self.voice_message_available:
             system += "\n\nVOICE MESSAGE SPEECH STYLE\n" + read_prompt("voice_message.md")
         else:
@@ -125,6 +126,7 @@ class ContextBuilder:
             "user_profile": component_size(profile),
             "response_instructions": component_size(response), "memory_policy": component_size(memory_policy),
             "emotion_policy": component_size(emotion_policy),
+            "episodic_policy": component_size(episodic_policy),
             "action_tendencies": component_size(action_tendencies),
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
@@ -210,8 +212,14 @@ class ContextBuilder:
             episodes = await self.episodic_memory.relevant(chat_id, user_turn, self.episodic_memory_max_items)
             lines=[]
             for row in episodes:
-                line=f"[id={row['id']} | {'open' if row['unresolved'] else 'resolved'} | {row['kind']}] {row['summary']}"
-                if estimate_tokens('\n'.join([*lines,line])) <= self.episodic_memory_token_budget: lines.append(line); retrieved_episode_ids.append(row['id'])
+                line=f"[id={row['id']} | {'open' if row['unresolved'] else 'resolved'} | {row['kind']} | confidence={row['confidence']:.2f}] event: {row['summary']}"
+                thought=f"\nthought: {self._truncate_to_budget(row['reflection'], 120)}" if row['reflection'] else ''
+                full=line+thought
+                candidate='\n'.join([*lines,full])
+                if estimate_tokens(candidate) <= self.episodic_memory_token_budget:
+                    lines.append(full); retrieved_episode_ids.append(row['id'])
+                elif estimate_tokens('\n'.join([*lines,line])) <= self.episodic_memory_token_budget:
+                    lines.append(line); retrieved_episode_ids.append(row['id'])
             if lines:
                 block="RELEVANT EPISODES\n"+'\n'.join(lines)+"\nUse only when natural; ids are internal."
                 blocks.append(block); components['episodic_memories']=component_size(block)

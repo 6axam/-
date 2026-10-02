@@ -136,7 +136,6 @@ class MemoryEpisode(BaseModel):
     importance: float = Field(default=.5, ge=0, le=1)
     confidence: float = Field(default=.7, ge=0, le=1)
     unresolved: bool = False
-    resolve_episode_ids: list[int] = Field(default_factory=list, max_length=4)
     supersede_episode_id: int | None = Field(default=None, gt=0)
 
 
@@ -211,6 +210,7 @@ class LLMResponse(BaseModel):
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotion_delta: EmotionDelta = Field(default_factory=EmotionDelta)
     memory_episode: MemoryEpisode | None = None
+    resolve_episode_ids: list[int] = Field(default_factory=list, max_length=4)
     # Kept temporarily for backwards-compatible validation of old persisted
     # fixtures; the application no longer applies this global singleton state.
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
