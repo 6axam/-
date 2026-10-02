@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.8 — Open loops in initiative
+`unreleased` · 2026-10-03
+
+Active unresolved episodes can now appear as compact optional callbacks in initiative context. Their quality adds at most +0.08 to the existing spontaneous probability; no loop bypasses safety gates or resolves itself on send.
+
 ## v1.20.7 — Episodic memory relevance and guidance
 `unreleased` · 2026-10-03
 

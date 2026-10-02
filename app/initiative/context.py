@@ -12,6 +12,8 @@ class InitiativeContextBuilder:
     recent_history_token_budget = 300
     memory_token_budget = 300
     life_token_budget = 350
+    open_loop_token_budget = 400
+    open_loop_max_items = 3
     target_input_tokens = 3500
 
     def __init__(self, conversation_context, lifecycle, presence=None):
@@ -38,7 +40,7 @@ class InitiativeContextBuilder:
         history_lines = self._bounded(list(reversed(rendered)), self.recent_history_token_budget)
         history = "\n".join(reversed(history_lines)) or "(none)"
         character = "CORE CHARACTER\n" + read_prompt("character.md") + "\n\nLIFE BACKGROUND\n" + read_prompt("life_background.md") + "\n\n" + read_prompt("initiative.md")
-        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "bedtime_state": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "recent_initiatives": component_size("")}
+        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "bedtime_state": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "episodic_open_loops": component_size(""), "recent_initiatives": component_size("")}
         blocks = []
         if cc.personality:
             values = "\n".join(f"- {r['category']} / {r['subject']}: {r['value']}" for r in await cc.personality.relevant(history, limit=6)) or "(none yet)"
@@ -68,6 +70,14 @@ class InitiativeContextBuilder:
                 block = "RELEVANT USER MEMORIES\n" + "\n".join(lines) + "\nUse only when naturally relevant; do not mention ids."
                 blocks.append(block); components["relevant_memories"] = component_size(block)
         retrieved_life_event_ids = []
+        retrieved_episode_ids = []
+        if getattr(cc, "episodic_memory", None):
+            loops = await cc.episodic_memory.open_loops(chat_id, f"{lifecycle['followup_reason'] or ''} {history}", self.open_loop_max_items)
+            lines = self._bounded([f"[id={row['id']} | confidence={row['confidence']:.2f}] {row['summary']}" for row in loops], self.open_loop_token_budget)
+            if lines:
+                block = "OPEN LOOPS\n" + "\n".join(lines) + "\nOptional callbacks, not obligations. Use one only when natural; do not mention ids or force an old topic."
+                blocks.append(block); components["episodic_open_loops"] = component_size(block)
+                retrieved_episode_ids = [int(line.split("]", 1)[0][4:]) for line in lines]
         if getattr(cc, "self_life", None):
             events = await cc.self_life.relevant(f"{lifecycle['followup_reason'] or ''} {history}", local.date().isoformat(), 6)
             lines = self._bounded([f"[id={r['id']}] {r['local_day'] or 'recent'}: {r['summary']}" for r in events[:6]], self.life_token_budget)
@@ -80,4 +90,4 @@ class InitiativeContextBuilder:
             block = "RECENT INITIATIVES — vary form and openings\n" + "\n".join(f"- {r['basis'] or 'legacy'}/{r['kind'] or 'unknown'}: {r['reason']}" for r in recent)
             blocks.append(block); components["recent_initiatives"] = component_size(block)
         blocks.append("RECENT CONVERSATION\n" + history)
-        return character, "\n\n".join(blocks), {"chat_id": chat_id, "history_messages": len(history_lines), "target_input_tokens": self.target_input_tokens, "components": components, "retrieved_life_event_ids": retrieved_life_event_ids}
+        return character, "\n\n".join(blocks), {"chat_id": chat_id, "history_messages": len(history_lines), "target_input_tokens": self.target_input_tokens, "components": components, "retrieved_life_event_ids": retrieved_life_event_ids, "retrieved_episode_ids": retrieved_episode_ids}

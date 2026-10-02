@@ -71,6 +71,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 194 passed | 7.77 s | — | Full suite after emotional sleep-recovery fix. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_emotion_lifecycle.py tests/test_context_budget.py tests/test_llm.py -q` | 28 passed | 1.05 s | — | Episodic relevance, standalone resolution, context and schema checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.24 s | — | Full suite after episodic retrieval and guidance refinement. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_lifecycle_initiative.py tests/test_episodic_memory.py tests/test_context_budget.py tests/test_emotions.py -q` | 31 passed | 1.01 s | — | Initiative rails, episodic open-loop retrieval, context and emotional continuity checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.05 s | — | Full suite after open-loop initiative integration. |
 
 ## Maintenance rule
 

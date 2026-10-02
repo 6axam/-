@@ -23,12 +23,18 @@ class InitiativeScheduler:
         base = getattr(self.settings, "initiative_spontaneous_probability", .55)
         conversation_context = getattr(self.context, "conversation_context", None)
         engine = getattr(conversation_context, "emotion_engine", None)
-        if not engine:
-            return base
-        state = (await engine.get(chat_id)).values()
+        state = (await engine.get(chat_id)).values() if engine else None
+        if not state: return base
         pull = (state["social_need"] - .45) + (state["curiosity"] - .55) + (state["warmth"] - .65)
         resistance = (state["fatigue"] - .25) + (state["hurt"] - .02) + (state["irritation"] - .05) + (state["anxiety"] - .10)
-        return max(.15, min(.85, base * (1 + pull * .35 - resistance * .30)))
+        probability = base * (1 + pull * .35 - resistance * .30)
+        episodes = getattr(conversation_context, "episodic_memory", None)
+        if episodes:
+            loops = await episodes.open_loops(chat_id, limit=1)
+            if loops:
+                top = loops[0]
+                probability += min(.08, (.5 * top['importance'] + .5 * top['confidence']) * .08)
+        return max(.15, min(.85, probability))
 
     async def _safety_block(self, chat_id: int, daily_state=None):
         if self.manager.has_active_generation(chat_id): return "active_generation"

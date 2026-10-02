@@ -16,6 +16,15 @@ class EpisodicMemoryManager:
             score=relevance + r['importance']*.08 + r['confidence']*.05 + r['unresolved']*.05
             ranked.append((score,r))
         return [r for _,r in sorted(ranked,key=lambda v:(v[0],v[1]['id']),reverse=True)[:limit]]
+    async def open_loops(self, chat_id, query="", limit=3):
+        rows = await self.db.fetchall("SELECT *, (julianday('now')-julianday(created_at))/30.0 AS age_days FROM episodic_memories WHERE chat_id=? AND status='active' AND unresolved=1 ORDER BY updated_at DESC,id DESC LIMIT 48", (chat_id,))
+        ranked=[]
+        for row in rows:
+            relevance=_lexical_overlap(query, row['summary']+' '+row['reflection'])
+            age=max(0., float(row['age_days'] or 0))
+            score=row['importance']*.45 + row['confidence']*.25 + min(.12, relevance*.12) - min(.28, age*.008)
+            ranked.append((score,row))
+        return [row for _,row in sorted(ranked,key=lambda pair:(pair[0],pair[1]['id']),reverse=True)[:limit]]
     async def apply(self, chat_id, episode, state, *, resolve_episode_ids=(), generation_id=None, message_id=None, exposed_ids=frozenset()):
         for ident in resolve_episode_ids:
             if ident in exposed_ids:
