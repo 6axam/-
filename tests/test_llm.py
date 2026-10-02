@@ -31,6 +31,13 @@ def test_bedtime_delay_requires_a_real_one_time_delay():
         LLMResponse.model_validate_json('{"actions":[],"bedtime_adjustment":{"mode":"delay_once","delay_minutes":0}}')
 
 
+def test_emotion_delta_is_sparse_and_bounded_by_schema():
+    response = LLMResponse.model_validate_json('{"actions":[],"emotion_delta":{"warmth":0.04,"hurt":-0.02}}')
+    assert response.emotion_delta.values() == {"warmth": .04, "hurt": -.02}
+    with pytest.raises(ValidationError):
+        LLMResponse.model_validate_json('{"actions":[],"emotion_delta":{"warmth":0.13}}')
+
+
 async def test_provider_repairs_broken_json_once():
     calls = 0
     payloads = []

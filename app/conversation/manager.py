@@ -5,13 +5,14 @@ from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTi
 log = logging.getLogger(__name__)
 
 class ConversationManager:
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
         self.presence = presence
         self.memory_extractor = memory_extractor
         self.memory_manager = memory_manager
+        self.emotion_engine = emotion_engine
         self.self_life, self.timezone_name = self_life, timezone_name
         self.bedtime_ritual_enabled, self.bedtime_window_minutes = bedtime_ritual_enabled, bedtime_window_minutes
         self.initiative_scheduler = None
@@ -79,7 +80,9 @@ class ConversationManager:
 
     async def observe_reaction(self, chat_id: int, emoji: str) -> None:
         """A reaction is a lightweight, nonverbal signal, never a new turn."""
-        if emoji in {"❤️", "❤", "🔥", "🥰", "😍"} and self.emotional_state:
+        if emoji in {"❤️", "❤", "🔥", "🥰", "😍"} and self.emotion_engine:
+            await self.emotion_engine.apply_delta(chat_id, {"warmth": .01, "curiosity": .01})
+        elif emoji in {"❤️", "❤", "🔥", "🥰", "😍"} and self.emotional_state:
             await self.emotional_state.apply(
                 EmotionalUpdate(social_energy_delta=.01, conversation_interest_delta=.025)
             )
@@ -226,7 +229,9 @@ class ConversationManager:
                     log.exception("self_life_persistence_failed chat_id=%s generation=%s", chat_id, generation)
         if self.personality:
             await self.personality.apply(response.self_updates, turn_id)
-        if self.emotional_state:
+        if self.emotion_engine and not provider_failed:
+            await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
+        elif self.emotional_state:
             await self.emotional_state.apply(response.emotional_update)
         if self.lifecycle:
             await self.lifecycle.apply(chat_id, response.conversation)

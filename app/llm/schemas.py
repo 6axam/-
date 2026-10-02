@@ -111,6 +111,24 @@ class EmotionalUpdate(BaseModel):
     availability: Literal["available", "busy", "away"] | None = None
 
 
+class EmotionDelta(BaseModel):
+    """Sparse, bounded emotional movement proposed by the response model."""
+    model_config = ConfigDict(extra="forbid")
+    warmth: float | None = Field(default=None, ge=-.12, le=.12)
+    trust: float | None = Field(default=None, ge=-.12, le=.12)
+    joy: float | None = Field(default=None, ge=-.12, le=.12)
+    sadness: float | None = Field(default=None, ge=-.12, le=.12)
+    irritation: float | None = Field(default=None, ge=-.12, le=.12)
+    hurt: float | None = Field(default=None, ge=-.12, le=.12)
+    anxiety: float | None = Field(default=None, ge=-.12, le=.12)
+    fatigue: float | None = Field(default=None, ge=-.12, le=.12)
+    curiosity: float | None = Field(default=None, ge=-.12, le=.12)
+    social_need: float | None = Field(default=None, ge=-.12, le=.12)
+
+    def values(self) -> dict[str, float]:
+        return {name: value for name, value in self.model_dump().items() if value is not None}
+
+
 class ResponseTiming(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["immediate", "delayed"] = "immediate"
@@ -180,6 +198,9 @@ class LLMResponse(BaseModel):
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)
     spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
+    emotion_delta: EmotionDelta = Field(default_factory=EmotionDelta)
+    # Kept temporarily for backwards-compatible validation of old persisted
+    # fixtures; the application no longer applies this global singleton state.
     emotional_update: EmotionalUpdate = Field(default_factory=EmotionalUpdate)
     response_timing: ResponseTiming = Field(default_factory=ResponseTiming)
     bedtime_adjustment: BedtimeAdjustment = Field(default_factory=BedtimeAdjustment)

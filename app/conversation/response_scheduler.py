@@ -19,7 +19,10 @@ class ResponseScheduler:
         return await self.db.chat_is_active(chat_id, self.active_conversation_window_seconds)
 
     async def schedule(self, user_id: int, chat_id: int, generation_id: str, urgency: str, *, daily_state: dict | None = None):
-        state = await self.manager.emotional_state.get() if self.manager and self.manager.emotional_state else None
+        if self.manager and getattr(self.manager, "emotion_engine", None):
+            state = (await self.manager.emotion_engine.get(chat_id)).values()
+        else:
+            state = await self.manager.emotional_state.get() if self.manager and self.manager.emotional_state else None
         signals = await self.db.chat_response_signals(chat_id)
         event = (daily_state or {}).get("event")
         event_availability = event["availability"] if event and event["availability"] in {"busy", "away"} else None

@@ -19,9 +19,11 @@ class ContextBuilder:
                  memory_max_items: int = 6, self_life=None,
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
                  timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
-                 reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False):
+                 reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False,
+                 emotion_engine=None):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
+        self.emotion_engine = emotion_engine
         self.recent_max_messages = recent_max_messages
         self.recent_token_budget = recent_token_budget
         self.target_input_tokens = target_input_tokens
@@ -109,8 +111,9 @@ class ContextBuilder:
             "but never add one mechanically or instead of needed text."
         )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
+        emotion_policy = read_prompt("emotional_state.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
-        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + media_rule
+        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + emotion_policy + "\n\n" + media_rule
         if self.voice_message_available:
             system += "\n\nVOICE MESSAGE SPEECH STYLE\n" + read_prompt("voice_message.md")
         else:
@@ -203,7 +206,12 @@ class ContextBuilder:
             developed = "\n".join(f"- {row['category']} / {row['subject']}: {row['value']} (strength {row['strength']:.2f})" for row in entries) or "(none yet)"
             block = "DEVELOPED PERSONALITY\n" + developed
             blocks.append(block); components["personality_state"] = component_size(block)
-        if self.emotional_state:
+        if self.emotion_engine:
+            state = await self.emotion_engine.get(chat_id)
+            compact = "; ".join(f"{name}={value:.2f}" for name, value in state.values().items())
+            block = "EMOTIONAL CONTINUITY\n" + compact + "\nPrivate state: use subtly; do not mention numbers."
+            blocks.append(block); components["emotional_state"] = component_size(block)
+        elif self.emotional_state:
             state = await self.emotional_state.get()
             block = f"EMOTIONAL STATE\nmood={state['mood']}; energy={state['energy']:.2f}; social_energy={state['social_energy']:.2f}; offense={state['offense_level']:.2f}; interest={state['conversation_interest']:.2f}; availability={state['availability']}"
             blocks.append(block); components["emotional_state"] = component_size(block)

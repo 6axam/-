@@ -43,7 +43,11 @@ class InitiativeContextBuilder:
         if cc.personality:
             values = "\n".join(f"- {r['category']} / {r['subject']}: {r['value']}" for r in await cc.personality.relevant(history, limit=6)) or "(none yet)"
             block = "DEVELOPED PERSONALITY\n" + values; blocks.append(block); components["personality_state"] = component_size(block)
-        if cc.emotional_state:
+        if getattr(cc, "emotion_engine", None):
+            state = await cc.emotion_engine.get(chat_id)
+            block = "EMOTIONAL CONTINUITY\n" + "; ".join(f"{name}={value:.2f}" for name, value in state.values().items())
+            blocks.append(block); components["emotional_state"] = component_size(block)
+        elif cc.emotional_state:
             state = await cc.emotional_state.get()
             block = f"EMOTIONAL STATE\nmood={state['mood']}; energy={state['energy']:.2f}; social_energy={state['social_energy']:.2f}; offense={state['offense_level']:.2f}; interest={state['conversation_interest']:.2f}"
             blocks.append(block); components["emotional_state"] = component_size(block)

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.20.1 — Luna emotional deltas and context
+`unreleased` · 2026-10-03
+
+Luna can now return a sparse bounded emotional delta in her normal structured reply. It is applied only after a successful current generation, while compact per-chat continuity enters conversation and initiative context without an extra model request.
+
 ## v1.20.0 — Persistent emotional continuity foundation
 `unreleased` · 2026-10-03
 
