@@ -105,6 +105,12 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 227 passed, 1 failed | 9.44 s | — | Full suite found context token budget exceeded by initial appraisal guidance. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_context_budget.py tests/test_appraisal_semantics.py -q` | 16 passed | 0.47 s | — | Compact appraisal guidance and context budget recheck. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 228 passed | 9.38 s | — | Full suite after negative social appraisal correction. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_bond.py tests/test_relationship_sequences.py -q` | 10 passed | 0.32 s | — | Relationship security threat, repair and neutral-event dynamics. |
+| 2026-10-03 | Targeted affective, schema, prompt, lifecycle and history suite | collection error | 0.60 s | — | New test module import corrected. |
+| 2026-10-03 | Targeted affective, schema, prompt, lifecycle and history suite | 47 passed, 2 failed | 1.38 s | — | Corrected chemistry accessor and trimmed runtime prompt to budget. |
+| 2026-10-03 | Targeted affective, schema, prompt, lifecycle and history suite | 48 passed, 1 failed | 1.48 s | — | Corrected relationship-context field assertion. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_current_expression.py tests/test_relationship_bond.py tests/test_relationship_sequences.py tests/test_affective_appraisal.py tests/test_appraisal_semantics.py tests/test_affective_history.py tests/test_llm.py tests/test_context_budget.py -q` | 49 passed | 1.39 s | — | Same-turn intent, relationship security, schema order, prompt, lifecycle and history CLI. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 233 passed | 10.43 s | — | Full suite after same-turn expression correction. |
 
 ## Maintenance rule
 

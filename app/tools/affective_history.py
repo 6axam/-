@@ -20,5 +20,10 @@ def main():
    for name in ('bond_strength','relational_trust','rupture_load','love_strength','relationship_security','care_investment','familiarity'):
     if name in before and name in after:
      print(f"{name:18} {before[name]:.2f} -> {after[name]:.2f} ({after[name]-before[name]:+.2f})")
+  if row.get('current_expression'):
+   intent=row['current_expression']
+   print('CURRENT EXPRESSION')
+   for name in ('impatience','protest_tendency','repair_tendency','profanity_tendency','reflective_control'):
+    if name in intent: print(f"{name:18} {intent[name]:.2f}")
   print('BEHAVIOR'); print(' '.join(f'{k}={v:.2f}' for k,v in row.get('behavior_after',{}).items())); print()
 if __name__=='__main__': main()

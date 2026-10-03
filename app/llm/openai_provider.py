@@ -17,7 +17,7 @@ from app.conversation.tokens import estimate_tokens
 log = logging.getLogger(__name__)
 JSON_OBJECT_FORMAT = {"type": "json_object"}
 REPAIR_PROMPT = "Return only valid JSON matching this schema. Do not add markdown. Schema: " + json.dumps(LLMResponse.model_json_schema(), ensure_ascii=False)
-PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION = "Return JSON matching the structured response schema supplied via response_format. Do not add markdown."
+PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION = "Return JSON matching response_format. In this single generation, appraise the current event first, derive current_expression from prior state plus appraisal second, then write actions in that expression. Do not add markdown."
 INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION = "Decide only whether Anya should write first now. Use the supplied structured response schema. Follow the initiative policy in system context. Never guilt, pressure, or ask why the user is absent. Mention a current daily event title only when context marks it mentionable."
 
 

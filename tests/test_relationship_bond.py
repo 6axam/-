@@ -60,3 +60,23 @@ def test_meaningful_relationship_episode_has_small_bounded_weight():
     remembered = evolve_relationship(state, appraisal, episode=episode)
     assert remembered.care_investment > ordinary.care_investment
     assert remembered.care_investment - ordinary.care_investment < .002
+
+
+def test_replacement_threat_lowers_security_without_erasing_love_and_repair_is_slow():
+    state = RelationshipBondState(.9, .84, .85, .87, .08, .82, .9)
+    threat = AffectiveAppraisal(valence=-.65, intensity=.70, social_relevance=.80,
+        loss=.35, rejection=.65, frustration=.20, replacement_threat=.75,
+        dismissal=.55)
+    harmed = evolve_relationship(state, threat, social_safety_after=.65)
+    assert harmed.relationship_security < state.relationship_security
+    assert harmed.relational_trust < state.relational_trust
+    assert harmed.rupture_load > state.rupture_load
+    assert abs(harmed.bond_strength - state.bond_strength) < .005
+    assert abs(harmed.love_strength - state.love_strength) < .005
+    repaired = evolve_relationship(harmed, AffectiveAppraisal(social_relevance=.9,
+        warmth=.8, repair_attempt=.8, care=.7), social_safety_after=.75)
+    assert repaired.relationship_security > harmed.relationship_security
+    assert repaired.relational_trust < state.relational_trust
+    assert repaired.rupture_load > state.rupture_load
+    assert abs(repaired.bond_strength - state.bond_strength) < .005
+    assert evolve_relationship(state, AffectiveAppraisal(social_relevance=.9), social_safety_after=.9) == state

@@ -154,6 +154,25 @@ class AffectiveAppraisal(BaseModel):
     betrayal: float | None = Field(default=None, ge=0, le=1)
     def values(self): return {key:value for key,value in self.model_dump().items() if value is not None}
 
+
+class CurrentExpressionIntent(BaseModel):
+    """Transient same-turn expression, derived from prior state and current appraisal."""
+    model_config = ConfigDict(extra="forbid")
+    activation: float = Field(default=0, ge=0, le=1)
+    warmth_suppression: float = Field(default=0, ge=0, le=1)
+    impatience: float = Field(default=0, ge=0, le=1)
+    hostility: float = Field(default=0, ge=0, le=1)
+    withdrawal: float = Field(default=0, ge=0, le=1)
+    profanity_tendency: float = Field(default=0, ge=0, le=1)
+    caps_tendency: float = Field(default=0, ge=0, le=1)
+    burst_tendency: float = Field(default=0, ge=0, le=1)
+    protest_tendency: float = Field(default=0, ge=0, le=1)
+    repair_tendency: float = Field(default=0, ge=0, le=1)
+    reflective_control: float = Field(default=.5, ge=0, le=1)
+
+    def values(self) -> dict[str, float]:
+        return self.model_dump()
+
 class MemoryEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["shared_event", "anya_experience", "user_update", "relationship", "opinion_change", "open_loop"]
@@ -230,12 +249,13 @@ class StickerSemantics(BaseModel):
 
 class LLMResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    affective_appraisal: AffectiveAppraisal = Field(default_factory=AffectiveAppraisal)
+    current_expression: CurrentExpressionIntent = Field(default_factory=CurrentExpressionIntent)
     actions: list[Action] = Field(default_factory=list, max_length=12)
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)
     spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotion_delta: EmotionDelta = Field(default_factory=EmotionDelta)
-    affective_appraisal: AffectiveAppraisal = Field(default_factory=AffectiveAppraisal)
     memory_episode: MemoryEpisode | None = None
     resolve_episode_ids: list[int] = Field(default_factory=list, max_length=4)
     # Kept temporarily for backwards-compatible validation of old persisted

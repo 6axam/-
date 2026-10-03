@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.3 — Same-turn emotional expression fix
+`unreleased` · 2026-10-03
+
+Corrected relationship security under rejection and replacement threats; added transient same-turn expression intent, state-dependent conflict guidance, and regression coverage without extra model calls.
+
 ## v1.22.2 — Negative social appraisal correction
 `unreleased` · 2026-10-03
 

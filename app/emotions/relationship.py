@@ -37,7 +37,7 @@ def _signal(appraisal):
     return {key: float(value or 0) for key, value in values.items()}
 
 
-def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=True, test_mode=False, episode=None):
+def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=True, test_mode=False, episode=None, social_safety_after=None):
     """One bounded accepted event. Acute pain cannot erase a durable bond."""
     a = _signal(appraisal)
     relevance = a.get('social_relevance', 0)
@@ -58,7 +58,19 @@ def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=T
     bond_delta = scale * (.004 * positive * (1 - state.bond_strength)
                           - .010 * negative * max(0, rupture - .12))
     bond = clamp(state.bond_strength + bond_delta)
-    security = clamp(.55 * trust + .25 * bond + .20 * (1 - rupture))
+    # Security is a slowly updated expectation, not a freshly recomputed
+    # weighted average. Recomputing jumped upward from conservative migration
+    # seeds even during rejection and replacement threats.
+    safety = trust if social_safety_after is None else clamp(social_safety_after)
+    target_security = clamp(.40 * trust + .25 * bond + .25 * safety + .10 * (1 - rupture))
+    threat_pressure = a.get('replacement_threat', 0) * relevance
+    event_move = (.035 * positive + .025 * repair - .055 * negative
+                  - .025 * threat_pressure + .08 * (target_security - state.relationship_security))
+    if negative >= .35 and negative > positive:
+        event_move = min(event_move, -.02 * negative)
+    elif repair >= .35:
+        event_move = max(event_move, .008 * repair)
+    security = clamp(state.relationship_security + scale * max(-.07, min(.035, event_move)))
     target_love = clamp(.45 * bond + .20 * care + .15 * familiarity +
                         .12 * trust + .08 * security - .16 * max(0, rupture - .35))
     # Different entering/leaving rates supply hysteresis without a love toggle.
@@ -103,9 +115,9 @@ class RelationshipBondManager:
             'meaningful_interactions=excluded.meaningful_interactions,updated_at=CURRENT_TIMESTAMP',
             (chat_id, *state.values().values(), state.meaningful_interactions))
 
-    async def apply(self, chat_id, appraisal, *, meaningful=True, test_mode=False, episode=None):
+    async def apply(self, chat_id, appraisal, *, meaningful=True, test_mode=False, episode=None, social_safety_after=None):
         before = await self.get(chat_id)
-        after = evolve_relationship(before, appraisal, meaningful=meaningful, test_mode=test_mode, episode=episode)
+        after = evolve_relationship(before, appraisal, meaningful=meaningful, test_mode=test_mode, episode=episode, social_safety_after=social_safety_after)
         if after != before:
             await self._save(chat_id, after)
         return before, after

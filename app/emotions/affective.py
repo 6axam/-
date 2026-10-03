@@ -54,7 +54,7 @@ class AffectiveEngine:
   await self.db.execute('UPDATE affective_states SET regulators_json=?,updated_at=? WHERE chat_id=?',(json.dumps(updated.values()),stamp,chat_id))
   from app.emotions.profile import calculate, behavior
   previous=await self.db.fetchone('SELECT emotions_json FROM affective_profiles WHERE chat_id=?',(chat_id,))
-  _,bond=await self.relationship_manager.apply(chat_id,appraisal,test_mode=test_mode,episode=episode)
+  _,bond=await self.relationship_manager.apply(chat_id,appraisal,test_mode=test_mode,episode=episode,social_safety_after=updated.values()['social_safety'])
   emotions=calculate(updated, json.loads(previous['emotions_json']) if previous else None, signals=appraisal)
   await self.db.execute('INSERT INTO affective_profiles(chat_id,emotions_json,last_updated_at) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET emotions_json=excluded.emotions_json,last_updated_at=excluded.last_updated_at',(chat_id,json.dumps(emotions.values()),stamp))
   return state,delta,updated,emotions,behavior(updated,emotions,bond,night=self._night(now))

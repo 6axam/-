@@ -14,6 +14,7 @@ def test_history_cli_shows_relationship_transitions(tmp_path, monkeypatch, capsy
  AffectiveHistory(path).append(chat_id=1,message_id=2,generation_id='g',user_message='event',
   before={'valence':.5},after={'valence':.4},emotions_before={'hurt':.1},emotions_after={'hurt':.3},
   behavior={'protest_drive':.6,'contact_drive':.5},appraisal={'rejection':1},
+  current_expression={'impatience':.7,'protest_tendency':.6,'repair_tendency':.1,'profanity_tendency':.5,'reflective_control':.3},
   relationship_before={'bond_strength':.9,'relational_trust':.8,'rupture_load':.1,'love_strength':.9},
   relationship_after={'bond_strength':.9,'relational_trust':.78,'rupture_load':.13,'love_strength':.89})
  monkeypatch.setattr(sys,'argv',['affective_history','--last','1','--path',str(path)])
@@ -21,3 +22,4 @@ def test_history_cli_shows_relationship_transitions(tmp_path, monkeypatch, capsy
  output=capsys.readouterr().out
  assert 'RELATIONSHIP' in output and 'bond_strength' in output and 'relational_trust' in output
  assert 'protest_drive=0.60' in output
+ assert 'CURRENT EXPRESSION' in output and 'protest_tendency' in output and 'repair_tendency' in output
