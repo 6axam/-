@@ -119,6 +119,7 @@ async def main():
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
                                   self_life=self_life, timezone_name=s.timezone, bedtime_ritual_enabled=s.bedtime_ritual_enabled,
                                   bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory)
+    manager.affective_engine = affective_engine
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
 
     async def on_messages_read(record):

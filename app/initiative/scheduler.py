@@ -25,6 +25,10 @@ class InitiativeScheduler:
         engine = getattr(conversation_context, "emotion_engine", None)
         state = (await engine.get(chat_id)).values() if engine else None
         if not state: return base
+        affective = getattr(conversation_context, "affective_engine", None)
+        if affective:
+            behavior = await affective.get_behavior(chat_id)
+            base *= max(.45, min(1.35, .65 + behavior.initiative_drive * .45 + behavior.social_seeking * .2 - behavior.avoidance * .3))
         pull = (state["social_need"] - .45) + (state["curiosity"] - .55) + (state["warmth"] - .65)
         resistance = (state["fatigue"] - .25) + (state["hurt"] - .02) + (state["irritation"] - .05) + (state["anxiety"] - .10)
         probability = base * (1 + pull * .35 - resistance * .30)

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.3 — Affective behavior guidance
+`unreleased` · 2026-10-03
+
+Conversation context now carries compact chemistry, salient emotions and behavior factors; timing and initiative consume behavior-derived signals.
+
 ## v1.21.2 — Luna affective appraisal
 `unreleased` · 2026-10-03
 

@@ -79,6 +79,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 198 passed | 6.38 s | — | Full suite after affective emotional spectrum. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_affective_profile.py tests/test_emotion_lifecycle.py tests/test_llm.py -q` | 22 passed | 0.67 s | — | Appraisal schema, caps, persistence, spectrum and lifecycle checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 200 passed | 6.07 s | — | Full suite after Luna affective appraisal integration. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_context_budget.py tests/test_response_prompt.py tests/test_lifecycle_initiative.py tests/test_time_availability.py -q` | 39 passed | 0.61 s | — | Affective context, prompt compactness, initiative and timing checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 200 passed | 6.21 s | — | Full suite after affective behavior guidance. |
 
 ## Maintenance rule
 

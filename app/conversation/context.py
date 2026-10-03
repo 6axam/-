@@ -130,6 +130,7 @@ class ContextBuilder:
             "action_tendencies": component_size(action_tendencies),
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
+            "affective_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
             "episodic_memories": component_size(""),
@@ -233,6 +234,14 @@ class ContextBuilder:
             compact = "; ".join(f"{name}={value:.2f}" for name, value in state.values().items())
             block = "EMOTIONAL CONTINUITY\n" + compact + "\nPrivate state: use subtly; do not mention numbers."
             blocks.append(block); components["emotional_state"] = component_size(block)
+        if getattr(self, "affective_engine", None):
+            chemistry = await self.affective_engine.get(chat_id)
+            emotions = await self.affective_engine.get_emotions(chat_id)
+            behavior = await self.affective_engine.get_behavior(chat_id)
+            regulators = "; ".join(f"{name}={value:.2f}" for name, value in chemistry.values().items())
+            salient = sorted(emotions.values().items(), key=lambda item: item[1], reverse=True)[:10]
+            block = "AFFECTIVE STATE\nChemistry: " + regulators + "\nSalient emotions: " + "; ".join(f"{name}={value:.2f}" for name, value in salient) + "\nBehavior: " + "; ".join(f"{name}={value:.2f}" for name, value in behavior.values().items()) + "\nInternal guidance only: current user event may immediately shape this reply; never expose scores."
+            blocks.append(block); components["affective_state"] = component_size(block)
         elif self.emotional_state:
             state = await self.emotional_state.get()
             block = f"EMOTIONAL STATE\nmood={state['mood']}; energy={state['energy']:.2f}; social_energy={state['social_energy']:.2f}; offense={state['offense_level']:.2f}; interest={state['conversation_interest']:.2f}; availability={state['availability']}"
