@@ -128,6 +128,26 @@ class EmotionDelta(BaseModel):
     def values(self) -> dict[str, float]:
         return {name: value for name, value in self.model_dump().items() if value is not None}
 
+class AffectiveAppraisal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    valence: float | None = Field(default=None, ge=-1, le=1)
+    intensity: float | None = Field(default=None, ge=0, le=1)
+    social_relevance: float | None = Field(default=None, ge=0, le=1)
+    novelty: float | None = Field(default=None, ge=0, le=1)
+    threat: float | None = Field(default=None, ge=0, le=1)
+    loss: float | None = Field(default=None, ge=0, le=1)
+    rejection: float | None = Field(default=None, ge=0, le=1)
+    frustration: float | None = Field(default=None, ge=0, le=1)
+    warmth: float | None = Field(default=None, ge=0, le=1)
+    achievement: float | None = Field(default=None, ge=0, le=1)
+    relief: float | None = Field(default=None, ge=0, le=1)
+    self_blame: float | None = Field(default=None, ge=0, le=1)
+    other_blame: float | None = Field(default=None, ge=0, le=1)
+    uncertainty: float | None = Field(default=None, ge=0, le=1)
+    humor: float | None = Field(default=None, ge=0, le=1)
+    closeness: float | None = Field(default=None, ge=0, le=1)
+    def values(self): return {key:value for key,value in self.model_dump().items() if value is not None}
+
 class MemoryEpisode(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["shared_event", "anya_experience", "user_update", "relationship", "opinion_change", "open_loop"]
@@ -209,6 +229,7 @@ class LLMResponse(BaseModel):
     spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)
     emotion_delta: EmotionDelta = Field(default_factory=EmotionDelta)
+    affective_appraisal: AffectiveAppraisal = Field(default_factory=AffectiveAppraisal)
     memory_episode: MemoryEpisode | None = None
     resolve_episode_ids: list[int] = Field(default_factory=list, max_length=4)
     # Kept temporarily for backwards-compatible validation of old persisted

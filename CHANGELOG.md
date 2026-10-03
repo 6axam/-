@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.2 — Luna affective appraisal
+`unreleased` · 2026-10-03
+
+Luna now supplies sparse event appraisals in the existing response contract. Accepted responses apply bounded chemistry changes, persist a derived emotion profile, and expose deterministic behavior without another model call.
+
 ## v1.21.1 — Full affective emotion spectrum
 `unreleased` · 2026-10-03
 

@@ -231,7 +231,11 @@ class ConversationManager:
         if self.personality:
             await self.personality.apply(response.self_updates, turn_id)
         if self.emotion_engine and not provider_failed:
-            current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
+            affective = getattr(self, "affective_engine", None)
+            if affective:
+                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal)
+            else:
+                current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
             if self.episodic_memory:
                 await self.episodic_memory.apply(chat_id, response.memory_episode, current_emotions, resolve_episode_ids=response.resolve_episode_ids, generation_id=generation, message_id=target_message_id, exposed_ids=set(breakdown.get('retrieved_episode_ids', [])))
         elif self.emotional_state:
