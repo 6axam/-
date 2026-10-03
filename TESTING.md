@@ -73,6 +73,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.24 s | — | Full suite after episodic retrieval and guidance refinement. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_lifecycle_initiative.py tests/test_episodic_memory.py tests/test_context_budget.py tests/test_emotions.py -q` | 31 passed | 1.01 s | — | Initiative rails, episodic open-loop retrieval, context and emotional continuity checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.05 s | — | Full suite after open-loop initiative integration. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_chemistry.py tests/test_emotions.py -q` | 7 passed | 0.15 s | — | Persistent affective chemistry baseline, sleep and deterministic evolution. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 196 passed | 6.39 s | — | Full suite after affective chemistry foundation. |
 
 ## Maintenance rule
 

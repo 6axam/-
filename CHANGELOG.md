@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.0 — Affective chemistry foundation
+`unreleased` · 2026-10-03
+
+Added persistent per-chat regulator chemistry with canonical baselines, bounded deterministic evolution, social homeostasis and sleep energy recovery.
+
 ## v1.20.8 — Open loops in initiative
 `unreleased` · 2026-10-03
 

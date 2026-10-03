@@ -325,6 +325,12 @@ MIGRATIONS = [
     );
     CREATE INDEX IF NOT EXISTS idx_episodic_chat_status ON episodic_memories(chat_id,status,unresolved,updated_at DESC);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS affective_states (
+      chat_id INTEGER PRIMARY KEY, regulators_json TEXT NOT NULL,
+      last_advanced_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 
