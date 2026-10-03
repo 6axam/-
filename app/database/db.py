@@ -331,6 +331,12 @@ MIGRATIONS = [
       last_advanced_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS affective_profiles (
+      chat_id INTEGER PRIMARY KEY, emotions_json TEXT NOT NULL,
+      last_updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.1 — Full affective emotion spectrum
+`unreleased` · 2026-10-03
+
+Added 42 bounded concurrent emotion activations with deterministic inertia and a derived affective behavior profile.
+
 ## v1.21.0 — Affective chemistry foundation
 `unreleased` · 2026-10-03
 

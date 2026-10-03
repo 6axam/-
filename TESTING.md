@@ -75,6 +75,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 195 passed | 9.05 s | — | Full suite after open-loop initiative integration. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_chemistry.py tests/test_emotions.py -q` | 7 passed | 0.15 s | — | Persistent affective chemistry baseline, sleep and deterministic evolution. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 196 passed | 6.39 s | — | Full suite after affective chemistry foundation. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_affective_chemistry.py tests/test_emotions.py tests/test_emotion_lifecycle.py -q` | 11 passed | 0.28 s | — | Affective spectrum, behavior profile, chemistry and lifecycle checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 198 passed | 6.38 s | — | Full suite after affective emotional spectrum. |
 
 ## Maintenance rule
 
