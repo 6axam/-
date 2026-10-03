@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.5 — High-arousal expression execution
+`unreleased` · 2026-10-03
+
+Made extreme same-turn expression suppress polished analysis, bounded CAPS and burst output, preserved controlled argument, and protected sensitive memories during relevant counterattack.
+
 ## v1.22.4 — Extreme affective behavior tuning
 `unreleased` · 2026-10-03
 

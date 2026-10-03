@@ -117,6 +117,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 237 passed, 1 failed | 7.12 s | — | Full suite found a compact voice-request prompt phrase regression. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_response_prompt.py tests/test_context_budget.py tests/test_emotional_v3_tuning.py tests/test_current_expression.py -q` | 32 passed | 3.30 s | — | Voice, compact prompt, Emotional V3 and same-turn contracts rechecked. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 238 passed | 6.69 s | — | Full suite after Emotional V3 tuning. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q tests/test_high_arousal_expression.py tests/test_current_expression.py tests/test_emotional_v3_tuning.py tests/test_context_budget.py` | 23 passed | 0.85 s | — | High-arousal surface gates, bounded CAPS/bursts, controlled and moderate conflict, memory safety, context budget and single-call lifecycle. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 243 passed | 10.49 s | — | Full suite after strengthening high-arousal expression execution. |
 
 ## Maintenance rule
 

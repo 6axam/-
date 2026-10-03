@@ -164,11 +164,11 @@ class CurrentExpressionIntent(BaseModel):
     hostility: float = Field(default=0, ge=0, le=1)
     withdrawal: float = Field(default=0, ge=0, le=1)
     profanity_tendency: float = Field(default=0, ge=0, le=1)
-    caps_tendency: float = Field(default=0, ge=0, le=1)
+    caps_tendency: float = Field(default=0, ge=0, le=1, description="Same-turn tendency toward one bounded CAPS fragment, never an all-CAPS reply.")
     burst_tendency: float = Field(default=0, ge=0, le=1)
     protest_tendency: float = Field(default=0, ge=0, le=1)
     repair_tendency: float = Field(default=0, ge=0, le=1)
-    reflective_control: float = Field(default=.5, ge=0, le=1)
+    reflective_control: float = Field(default=.5, ge=0, le=1, description="Same-turn capacity for coherent analysis: very low suppresses explanations; high permits argument without requiring it.")
 
     def values(self) -> dict[str, float]:
         return self.model_dump()
