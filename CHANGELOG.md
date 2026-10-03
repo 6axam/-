@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.4 — Extreme affective behavior tuning
+`unreleased` · 2026-10-03
+
+Preserved headroom in extreme behavior, made inhibition event-driven, added gradual relationship repair, strengthened same-turn expression and conflict-relevant episodic recall, and reduced meta self-analysis.
+
 ## v1.22.3 — Same-turn emotional expression fix
 `unreleased` · 2026-10-03
 

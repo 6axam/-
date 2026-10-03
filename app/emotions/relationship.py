@@ -49,8 +49,9 @@ def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=T
         return state
     episode_weight = (1.08 if episode and episode.kind == 'relationship' and episode.importance >= .7 else 1.0)
     scale = (.12 if test_mode else 1.0) * episode_weight
-    rupture = clamp(state.rupture_load + scale * (.027 * negative - .014 * repair - .003 * positive))
-    trust = clamp(state.relational_trust + scale * (.012 * positive + .006 * repair - .024 * negative * (1 + .4 * state.rupture_load)))
+    repair_bond = repair * (.35 + .65 * state.bond_strength)
+    rupture = clamp(state.rupture_load + scale * (.027 * negative - .018 * repair_bond - .003 * positive))
+    trust = clamp(state.relational_trust + scale * (.010 * positive + .006 * repair_bond - .024 * negative * (1 + .4 * state.rupture_load)))
     care = clamp(state.care_investment + scale * (.008 * positive - .003 * negative))
     familiarity = clamp(state.familiarity + .002 * scale)
     # Long established bonds resist isolated shocks; accumulated rupture allows
@@ -64,7 +65,7 @@ def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=T
     safety = trust if social_safety_after is None else clamp(social_safety_after)
     target_security = clamp(.40 * trust + .25 * bond + .25 * safety + .10 * (1 - rupture))
     threat_pressure = a.get('replacement_threat', 0) * relevance
-    event_move = (.035 * positive + .025 * repair - .055 * negative
+    event_move = (.035 * positive + .030 * repair_bond - .055 * negative
                   - .025 * threat_pressure + .08 * (target_security - state.relationship_security))
     if negative >= .35 and negative > positive:
         event_move = min(event_move, -.02 * negative)

@@ -147,6 +147,19 @@ class ContextBuilder:
         retrieved_life_event_ids: list[int] = []
         retrieved_episode_ids: list[int] = []
         local = datetime.now(ZoneInfo(self.timezone_name))
+        affective_chemistry = affective_emotions = affective_behavior = None
+        conflict_activation = 0.
+        if getattr(self, "affective_engine", None):
+            affective_chemistry = await self.affective_engine.get(chat_id)
+            affective_emotions = await self.affective_engine.get_emotions(chat_id)
+            affective_behavior = await self.affective_engine.get_behavior(chat_id)
+            emotion_values = affective_emotions.values()
+            behavior_values = affective_behavior.values()
+            conflict_activation = max(
+                emotion_values.get('hurt', 0), emotion_values.get('resentment', 0),
+                behavior_values.get('hostility', 0), behavior_values.get('protest_drive', 0),
+                behavior_values.get('rumination_drive', 0),
+            )
         if self.self_life:
             try:
                 events = await self.self_life.relevant(user_turn, local.date().isoformat(), self.self_life_max_items)
@@ -211,7 +224,17 @@ class ContextBuilder:
                 # Memory must not prevent a normal conversation response.
                 log.exception("memory_retrieval_failed chat_id=%s", chat_id)
         if self.episodic_memory:
-            episodes = await self.episodic_memory.relevant(chat_id, user_turn, self.episodic_memory_max_items)
+            current_affective = None
+            if affective_chemistry:
+                current_affective = {
+                    'chemistry': affective_chemistry.values(),
+                    'salient_emotions': affective_emotions.values(),
+                    'behavior': affective_behavior.values(),
+                }
+            episodes = await self.episodic_memory.relevant(
+                chat_id, user_turn, self.episodic_memory_max_items,
+                current_affective=current_affective, conflict_activation=conflict_activation,
+            )
             lines=[]
             for row in episodes:
                 snapshot = self.episodic_memory._snapshot(row['emotion_snapshot'])
@@ -226,7 +249,10 @@ class ContextBuilder:
                 elif estimate_tokens('\n'.join([*lines,line])) <= self.episodic_memory_token_budget:
                     lines.append(line); retrieved_episode_ids.append(row['id'])
             if lines:
-                block="RELEVANT EPISODES\n"+'\n'.join(lines)+"\nUse only when natural; ids are internal."
+                instruction = "Use only when natural and semantically relevant; ids are internal."
+                if conflict_activation >= .55:
+                    instruction += " Conflict is active: a highly relevant past hurt, repeated pattern, or promise may shape the response concretely; do not force an unrelated callback."
+                block="RELEVANT EPISODES\n"+'\n'.join(lines)+"\n"+instruction
                 blocks.append(block); components['episodic_memories']=component_size(block)
         if self.personality:
             entries = await self.personality.relevant(user_turn)
@@ -239,9 +265,9 @@ class ContextBuilder:
             block = "EMOTIONAL CONTINUITY\n" + compact + "\nPrivate state: use subtly; do not mention numbers."
             blocks.append(block); components["emotional_state"] = component_size(block)
         if getattr(self, "affective_engine", None):
-            chemistry = await self.affective_engine.get(chat_id)
-            emotions = await self.affective_engine.get_emotions(chat_id)
-            behavior = await self.affective_engine.get_behavior(chat_id)
+            chemistry = affective_chemistry
+            emotions = affective_emotions
+            behavior = affective_behavior
             regulators = "; ".join(f"{name}={value:.2f}" for name, value in chemistry.values().items())
             salient = sorted(emotions.values().items(), key=lambda item: item[1], reverse=True)[:10]
             block = "AFFECTIVE STATE\nChemistry: " + regulators + "\nSalient emotions: " + "; ".join(f"{name}={value:.2f}" for name, value in salient) + "\nBehavior: " + "; ".join(f"{name}={value:.2f}" for name, value in behavior.values().items()) + "\nInternal guidance only: current user event may immediately shape this reply; never expose scores."

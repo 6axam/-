@@ -21,11 +21,19 @@ class EpisodicMemoryManager:
     @staticmethod
     def _resonance(current, snapshot):
         chemistry=snapshot.get('chemistry',snapshot)
+        current=current.get('chemistry',current) if isinstance(current,dict) else {}
         keys=('valence','arousal','social_safety','attachment','stress','grief_load','resentment','vulnerability')
         shared=[key for key in keys if key in chemistry and key in current]
         if not shared:return 0
         return max(0.,1-sum(abs(current[key]-chemistry[key]) for key in shared)/len(shared))
-    async def relevant(self, chat_id, query, limit=6, current_affective=None):
+    @staticmethod
+    def _conflict_weight(snapshot):
+        emotions=snapshot.get('salient_emotions',{})
+        behavior=snapshot.get('behavior',{})
+        values=[emotions.get(key,0) for key in ('hurt','resentment','anger','defensiveness')]
+        values += [behavior.get(key,0) for key in ('hostility','protest_drive','rumination_drive')]
+        return max(values,default=0)
+    async def relevant(self, chat_id, query, limit=6, current_affective=None, conflict_activation=0):
         rows = await self.db.fetchall("SELECT * FROM episodic_memories WHERE chat_id=? AND status='active' ORDER BY updated_at DESC,id DESC LIMIT 100", (chat_id,))
         ranked=[]
         for r in rows:
@@ -35,7 +43,10 @@ class EpisodicMemoryManager:
             threshold=.035 if r['unresolved'] else .08
             if relevance < threshold: continue
             # Resonance only breaks close topical ties; it cannot pass the floor.
-            score=relevance + r['importance']*.08 + r['confidence']*.05 + r['unresolved']*.05 + min(.05,self._resonance(current_affective or {},self._snapshot(r['emotion_snapshot']))*.05)
+            snapshot=self._snapshot(r['emotion_snapshot'])
+            resonance=min(.05,self._resonance(current_affective or {},snapshot)*.05)
+            conflict_bonus=min(.14, conflict_activation*self._conflict_weight(snapshot)*.14)
+            score=relevance + r['importance']*.08 + r['confidence']*.05 + r['unresolved']*.05 + resonance + conflict_bonus
             ranked.append((score,r))
         return [r for _,r in sorted(ranked,key=lambda v:(v[0],v[1]['id']),reverse=True)[:limit]]
     async def open_loops(self, chat_id, query="", limit=3):

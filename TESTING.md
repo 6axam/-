@@ -111,6 +111,12 @@ git diff --check
 | 2026-10-03 | Targeted affective, schema, prompt, lifecycle and history suite | 48 passed, 1 failed | 1.48 s | — | Corrected relationship-context field assertion. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_current_expression.py tests/test_relationship_bond.py tests/test_relationship_sequences.py tests/test_affective_appraisal.py tests/test_appraisal_semantics.py tests/test_affective_history.py tests/test_llm.py tests/test_context_budget.py -q` | 49 passed | 1.39 s | — | Same-turn intent, relationship security, schema order, prompt, lifecycle and history CLI. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 233 passed | 10.43 s | — | Full suite after same-turn expression correction. |
+| 2026-10-03 | Targeted Emotional V3 behavior, relationship, prompt, episode and lifecycle suite | 33 passed, 4 failed | 0.65 s | — | Exposed repair overshoot, compact-prompt budget and legacy prompt-marker regressions. |
+| 2026-10-03 | Targeted Emotional V3 behavior, relationship, prompt, episode and lifecycle suite | 50 passed, 1 failed | 0.70 s | — | Conflict-expression marker assertion needed case-insensitive matching. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_emotional_v3_tuning.py tests/test_affective_profile.py tests/test_affective_appraisal.py tests/test_relationship_sequences.py tests/test_relationship_bond.py tests/test_current_expression.py tests/test_episodic_memory.py tests/test_context_budget.py tests/test_response_prompt.py tests/test_appraisal_semantics.py -q` | 51 passed | 0.69 s | — | Extreme headroom, dynamic inhibition, slow repair, binding expression, relevant conflict recall and single-call lifecycle. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 237 passed, 1 failed | 7.12 s | — | Full suite found a compact voice-request prompt phrase regression. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_voice.py tests/test_response_prompt.py tests/test_context_budget.py tests/test_emotional_v3_tuning.py tests/test_current_expression.py -q` | 32 passed | 3.30 s | — | Voice, compact prompt, Emotional V3 and same-turn contracts rechecked. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 238 passed | 6.69 s | — | Full suite after Emotional V3 tuning. |
 
 ## Maintenance rule
 
