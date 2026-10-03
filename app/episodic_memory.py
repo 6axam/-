@@ -5,6 +5,14 @@ log = logging.getLogger(__name__)
 class EpisodicMemoryManager:
     def __init__(self, db): self.db = db
     @staticmethod
+    def build_affective_snapshot(chemistry, emotions, behavior):
+        """Return the canonical immutable V2 snapshot stored with an episode."""
+        chemistry_values=chemistry.values() if hasattr(chemistry,'values') else dict(chemistry)
+        emotion_values=emotions.values() if hasattr(emotions,'values') else dict(emotions)
+        behavior_values=behavior.values() if hasattr(behavior,'values') else dict(behavior)
+        salient=dict(sorted(emotion_values.items(),key=lambda item:item[1],reverse=True)[:10])
+        return {'version':2,'chemistry':chemistry_values,'salient_emotions':salient,'behavior':behavior_values}
+    @staticmethod
     def _snapshot(value):
         try:
             data=json.loads(value or '{}')

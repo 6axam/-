@@ -85,6 +85,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 201 passed | 9.05 s | — | Full suite after affective transition history. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_context_budget.py tests/test_lifecycle_initiative.py -q` | 26 passed | 0.83 s | — | V2 episodic snapshots, compact context, semantic floor and open-loop checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 202 passed | 8.96 s | — | Full suite after affective episodic continuity. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_conversation.py tests/test_delayed_cancellation.py tests/test_emotion_lifecycle.py tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_affective_profile.py tests/test_episodic_memory.py tests/test_llm.py -q` | 33 passed | 1.17 s | — | Production conversation-to-episode snapshot lifecycle, affective mutation safety, cancellation, provider failure and structured-output repair coverage. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.17 s | — | Full suite after connecting canonical post-event V2 snapshots to production episode creation. |
 
 ## Maintenance rule
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.6 — Production affective episode snapshots
+`unreleased` · 2026-10-03
+
+Accepted conversation turns now pass the canonical post-event V2 affective snapshot into production episode creation.
+
 ## v1.21.5 — Affective episodic continuity
 `unreleased` · 2026-10-03
 

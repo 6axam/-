@@ -237,10 +237,12 @@ class ConversationManager:
                 _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal)
                 from app.emotions.history import AffectiveHistory
                 AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values())
+                affective_snapshot = self.episodic_memory.build_affective_snapshot(current_emotions, _profile, _behavior) if self.episodic_memory else None
             else:
                 current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
+                affective_snapshot = None
             if self.episodic_memory:
-                await self.episodic_memory.apply(chat_id, response.memory_episode, current_emotions, resolve_episode_ids=response.resolve_episode_ids, generation_id=generation, message_id=target_message_id, exposed_ids=set(breakdown.get('retrieved_episode_ids', [])))
+                await self.episodic_memory.apply(chat_id, response.memory_episode, current_emotions, affective_snapshot=affective_snapshot, resolve_episode_ids=response.resolve_episode_ids, generation_id=generation, message_id=target_message_id, exposed_ids=set(breakdown.get('retrieved_episode_ids', [])))
         elif self.emotional_state:
             await self.emotional_state.apply(response.emotional_update)
         if self.lifecycle:
