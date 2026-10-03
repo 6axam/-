@@ -34,7 +34,7 @@ def calculate(chemistry, previous=None, signals=None):
  values['jealousy']=jealousy if first else _mix(p,jealousy,'jealousy')
  return EmotionProfile(values)
 
-def behavior(chemistry, emotions, bond=None, *, absence_hours=0):
+def behavior(chemistry, emotions, bond=None, *, absence_hours=0, night=False):
  c=chemistry.values(); e=emotions.values()
  bond_strength=bond.bond_strength if bond else c['attachment']
  love=bond.love_strength if bond else e['affection']
@@ -47,15 +47,15 @@ def behavior(chemistry, emotions, bond=None, *, absence_hours=0):
  protest=clamp((.35*hurt+.25*anger+.20*c['social_need']+.20*fear)*(.4+.6*arousal)*(.4+.6*bond_strength))
  repair=clamp((.45*e['regret']+.20*hurt+.20*e['closeness']+.15*rupture)*bond_strength*(1-.7*anger))
  rumination=clamp((.35*hurt+.30*e['resentment']+.20*rupture+.15*fear)*c['attachment']*(.6+.4*arousal))
- volatility=clamp(.30*c['stress']+.23*(1-c['energy'])+.22*arousal+.15*c['vulnerability']+.10*rupture)
- regulation=clamp(.27*c['energy']+.22*c['social_safety']+.20*c['inhibition']+.15*(1-c['stress'])+.16*(1-arousal)-.18*hurt-.23*anger-.15*e['overwhelm'])
+ volatility=clamp(.30*c['stress']+.23*(1-c['energy'])+.22*arousal+.15*c['vulnerability']+.10*rupture+(.03 if night else 0))
+ regulation=clamp(.27*c['energy']+.22*c['social_safety']+.20*c['inhibition']+.15*(1-c['stress'])+.16*(1-arousal)-.18*hurt-.23*anger-.15*e['overwhelm']-(.05 if night else 0))
  avoidance=clamp(.45*hurt+.30*(1-c['energy'])+.25*(1-c['social_safety']))
  expression=clamp(.12+.65*anger+.40*e['irritation']+.30*e['overwhelm']+.20*arousal-.25*c['inhibition'])
  patience=clamp(.85-.65*anger-.35*e['irritation']-.20*hurt-.15*c['stress'])
  fluency=clamp(.55+.38*c['energy']-.55*apathy-.35*hurt-.15*e['overwhelm'])
  warmth=clamp(.45*e['affection']+.35*love+.20*c['social_safety']-.55*hurt-.35*anger-.25*avoidance)
  contact=clamp(.25*c['social_need']+.30*longing+.15*bond_strength+.15*repair+.15*e['curiosity']-.35*avoidance-.35*apathy-.12*(1-c['energy']))
- burst=clamp((.40*protest+.25*e['excitement']+.20*fear+.15*longing)*arousal*(.4+.6*expression)*(1-.65*regulation))
+ burst=clamp((.40*protest+.25*e['excitement']+.20*fear+.15*longing)*arousal*(.4+.6*expression)*(1-.65*regulation)+(.02 if night and longing > .5 else 0))
  caps=clamp(expression*arousal*(1-c['inhibition'])*(.45+.55*anger))
  profanity=clamp((.50*anger+.30*e['irritation']+.20*expression)*(1-.65*regulation))
  initiative=clamp(.18+.75*contact-.35*apathy-.25*avoidance)

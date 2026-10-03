@@ -244,9 +244,11 @@ class ConversationManager:
             affective = getattr(self, "affective_engine", None)
             if affective:
                 emotions_before = (await affective.get_emotions(chat_id)).values()
-                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats)
+                relationship_before = (await affective.relationship_manager.get(chat_id)).values()
+                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats, episode=response.memory_episode)
+                relationship_after = (await affective.relationship_manager.get(chat_id)).values()
                 from app.emotions.history import AffectiveHistory
-                AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values())
+                AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values(), relationship_before=relationship_before, relationship_after=relationship_after)
                 affective_snapshot = self.episodic_memory.build_affective_snapshot(current_emotions, _profile, _behavior) if self.episodic_memory else None
             else:
                 current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())

@@ -14,5 +14,11 @@ def main():
   for label,before,delta in [('REGULATORS',row.get('regulators_before',{}),row.get('regulator_delta',{})),('EMOTIONS',row.get('emotions_before',{}),row.get('emotion_delta',{}))]:
    print(label)
    for k,v in delta.items(): print(f"{k:18} {before[k]:.2f} -> {before[k]+v:.2f} ({v:+.2f})")
+  if 'relationship_after' in row:
+   print('RELATIONSHIP')
+   before=row.get('relationship_before',{}); after=row['relationship_after']
+   for name in ('bond_strength','relational_trust','rupture_load','love_strength','relationship_security','care_investment','familiarity'):
+    if name in before and name in after:
+     print(f"{name:18} {before[name]:.2f} -> {after[name]:.2f} ({after[name]-before[name]:+.2f})")
   print('BEHAVIOR'); print(' '.join(f'{k}={v:.2f}' for k,v in row.get('behavior_after',{}).items())); print()
 if __name__=='__main__': main()

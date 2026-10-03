@@ -83,7 +83,7 @@ async def main():
     from app.character.manager import PersonalityManager
     personality, emotional_state = PersonalityManager(db), None
     emotion_engine = EmotionalEngine(db, s.timezone)
-    affective_engine = AffectiveEngine(db)
+    affective_engine = AffectiveEngine(db, s.timezone)
     from app.emotions.relationship import RelationshipBondManager
     relationship_manager = RelationshipBondManager(db)
     episodic_memory = EpisodicMemoryManager(db)

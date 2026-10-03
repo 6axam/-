@@ -92,6 +92,10 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_bond.py tests/test_affective_appraisal.py tests/test_database.py -q` | 8 passed | 0.40 s | — | Persistent bond migration, conservative seeding, slow damage and repair, appraisal schema. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_relationship_bond.py tests/test_episodic_memory.py -q` | 17 passed | 0.50 s | — | Learned attachment, state driven behavior range, jealousy trigger, absence longing, bond and episode compatibility. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_character_prompt.py tests/test_lifecycle_initiative.py tests/test_initiative_context.py tests/test_context_budget.py tests/test_conversation.py tests/test_presence_replies.py -q` | 47 passed | 5.31 s | — | Relationship driven prompt and context, initiative probability and burst cap, conversation and presence gates. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_sequences.py tests/test_relationship_bond.py tests/test_affective_history.py tests/test_episodic_memory.py tests/test_emotion_lifecycle.py tests/test_lifecycle_initiative.py -q` | 34 passed | 0.91 s | — | Conflict, absence, jealousy, repair, test mode, stale/provider failure, relationship history, episodes and initiative gates. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 220 passed | 9.29 s | — | Full suite after Relationship V3 implementation. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_sequences.py tests/test_relationship_bond.py tests/test_affective_history.py tests/test_episodic_memory.py tests/test_emotion_lifecycle.py tests/test_lifecycle_initiative.py -q` | 34 passed | 0.85 s | — | Post-commit targeted verification of relationship sequences, observability and lifecycle gates. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 220 passed | 9.26 s | — | Post-commit full Relationship V3 suite. |
 
 ## Maintenance rule
 

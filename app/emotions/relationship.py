@@ -37,7 +37,7 @@ def _signal(appraisal):
     return {key: float(value or 0) for key, value in values.items()}
 
 
-def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=True, test_mode=False):
+def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=True, test_mode=False, episode=None):
     """One bounded accepted event. Acute pain cannot erase a durable bond."""
     a = _signal(appraisal)
     relevance = a.get('social_relevance', 0)
@@ -47,7 +47,8 @@ def evolve_relationship(state: RelationshipBondState, appraisal, *, meaningful=T
     repair = a.get('repair_attempt', 0) * relevance
     if not meaningful or relevance < .25 or (negative < .35 and positive < .35):
         return state
-    scale = .12 if test_mode else 1.0
+    episode_weight = (1.08 if episode and episode.kind == 'relationship' and episode.importance >= .7 else 1.0)
+    scale = (.12 if test_mode else 1.0) * episode_weight
     rupture = clamp(state.rupture_load + scale * (.027 * negative - .014 * repair - .003 * positive))
     trust = clamp(state.relational_trust + scale * (.012 * positive + .006 * repair - .024 * negative * (1 + .4 * state.rupture_load)))
     care = clamp(state.care_investment + scale * (.008 * positive - .003 * negative))
@@ -102,9 +103,9 @@ class RelationshipBondManager:
             'meaningful_interactions=excluded.meaningful_interactions,updated_at=CURRENT_TIMESTAMP',
             (chat_id, *state.values().values(), state.meaningful_interactions))
 
-    async def apply(self, chat_id, appraisal, *, meaningful=True, test_mode=False):
+    async def apply(self, chat_id, appraisal, *, meaningful=True, test_mode=False, episode=None):
         before = await self.get(chat_id)
-        after = evolve_relationship(before, appraisal, meaningful=meaningful, test_mode=test_mode)
+        after = evolve_relationship(before, appraisal, meaningful=meaningful, test_mode=test_mode, episode=episode)
         if after != before:
             await self._save(chat_id, after)
         return before, after

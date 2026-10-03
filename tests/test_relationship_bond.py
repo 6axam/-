@@ -2,7 +2,7 @@ import pytest
 
 from app.database.db import Database
 from app.emotions.relationship import RelationshipBondManager, RelationshipBondState, evolve_relationship
-from app.llm.schemas import AffectiveAppraisal
+from app.llm.schemas import AffectiveAppraisal, MemoryEpisode
 
 
 @pytest.mark.asyncio
@@ -50,3 +50,13 @@ def test_test_mode_preserves_durable_bond_but_positive_history_can_form_love():
     assert formed.love_strength > one.love_strength
     tested = evolve_relationship(formed, AffectiveAppraisal(social_relevance=1, rejection=1), test_mode=True)
     assert formed.bond_strength - tested.bond_strength < .001
+
+
+def test_meaningful_relationship_episode_has_small_bounded_weight():
+    state = RelationshipBondState(.7, .7, .7, .7, .1, .7, .7)
+    appraisal = AffectiveAppraisal(social_relevance=1, care=1, warmth=1)
+    ordinary = evolve_relationship(state, appraisal)
+    episode = MemoryEpisode(kind='relationship', summary='shared repair', importance=.8)
+    remembered = evolve_relationship(state, appraisal, episode=episode)
+    assert remembered.care_investment > ordinary.care_investment
+    assert remembered.care_investment - ordinary.care_investment < .002

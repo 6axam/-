@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.1 — Relationship transitions and regressions
+`unreleased` · 2026-10-03
+
+Affective history now records relationship before/delta/after with CLI display; deterministic regressions cover conflict, jealousy, repair and long term resilience.
+
 ## v1.22.0 — Relationship driven expression and initiative
 `unreleased` · 2026-10-03
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json, math
 from datetime import datetime, timezone
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 REGULATOR_BASELINES = {
  "valence":.54,"arousal":.30,"energy":.62,"reward_sensitivity":.55,"stress":.15,"social_safety":.72,
@@ -20,7 +21,12 @@ class AffectiveChemistry:
  def with_delta(self, delta): return AffectiveChemistry({k:clamp(self.values_map[k]+delta.get(k,0)) for k in REGULATORS})
 
 class AffectiveEngine:
- def __init__(self, db): self.db=db
+ def __init__(self, db, timezone_name='Europe/Kyiv'):
+  from app.emotions.relationship import RelationshipBondManager
+  self.db=db; self.relationship_manager=RelationshipBondManager(db); self.zone=ZoneInfo(timezone_name)
+ def _night(self, now=None):
+  hour=(now or datetime.now(timezone.utc)).astimezone(self.zone).hour
+  return 1 <= hour < 5
  @staticmethod
  def _stamp(now): return now.astimezone(timezone.utc).isoformat(timespec='microseconds')
  async def get(self, chat_id, *, now=None, sleeping=False):
@@ -37,23 +43,21 @@ class AffectiveEngine:
    if name == 'attachment': continue
    half=96 if name in {'attachment','resentment','grief_load'} else 18
    values[name]=base+(values[name]-base)*math.exp(-math.log(2)*hours/half)
-  from app.emotions.relationship import RelationshipBondManager
-  bond=await RelationshipBondManager(self.db).get(chat_id)
+  bond=await self.relationship_manager.get(chat_id)
   values['attachment']=clamp(values['attachment']+(bond.attachment_target-values['attachment'])*(1-math.exp(-hours/96)))
   values['energy']=clamp(values['energy']+((.85 if sleeping else .55)-values['energy'])*(1-math.exp(-hours/3)))
   values['social_need']=clamp(values['social_need']+min(.12,hours*.005))
   stamp=self._stamp(now); await self.db.execute('UPDATE affective_states SET regulators_json=?,last_advanced_at=?,updated_at=? WHERE chat_id=?',(json.dumps(values),stamp,stamp,chat_id)); return AffectiveChemistry(values)
- async def apply_appraisal(self, chat_id, appraisal, *, now=None, test_mode=False):
+ async def apply_appraisal(self, chat_id, appraisal, *, now=None, test_mode=False, episode=None):
   state=await self.get(chat_id,now=now); delta=appraisal_to_delta(appraisal)
   updated=state.with_delta(delta); stamp=self._stamp((now or datetime.now(timezone.utc)).astimezone(timezone.utc))
   await self.db.execute('UPDATE affective_states SET regulators_json=?,updated_at=? WHERE chat_id=?',(json.dumps(updated.values()),stamp,chat_id))
   from app.emotions.profile import calculate, behavior
   previous=await self.db.fetchone('SELECT emotions_json FROM affective_profiles WHERE chat_id=?',(chat_id,))
-  from app.emotions.relationship import RelationshipBondManager
-  _,bond=await RelationshipBondManager(self.db).apply(chat_id,appraisal,test_mode=test_mode)
+  _,bond=await self.relationship_manager.apply(chat_id,appraisal,test_mode=test_mode,episode=episode)
   emotions=calculate(updated, json.loads(previous['emotions_json']) if previous else None, signals=appraisal)
   await self.db.execute('INSERT INTO affective_profiles(chat_id,emotions_json,last_updated_at) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET emotions_json=excluded.emotions_json,last_updated_at=excluded.last_updated_at',(chat_id,json.dumps(emotions.values()),stamp))
-  return state,delta,updated,emotions,behavior(updated,emotions,bond)
+  return state,delta,updated,emotions,behavior(updated,emotions,bond,night=self._night(now))
  async def get_emotions(self,chat_id):
   row=await self.db.fetchone('SELECT emotions_json,last_updated_at FROM affective_profiles WHERE chat_id=?',(chat_id,))
   from app.emotions.profile import EmotionProfile,calculate
@@ -68,12 +72,11 @@ class AffectiveEngine:
   return EmotionProfile(values)
  async def get_behavior(self,chat_id):
   from app.emotions.profile import behavior
-  from app.emotions.relationship import RelationshipBondManager
   state=await self.get(chat_id)
-  bond=await RelationshipBondManager(self.db).get(chat_id)
+  bond=await self.relationship_manager.get(chat_id)
   row=await self.db.fetchone("SELECT (julianday('now')-julianday(last_meaningful_interaction_at))*24 AS hours FROM conversation_lifecycle WHERE chat_id=?",(chat_id,))
   absence=max(0.,row['hours'] or 0.) if row else 0.
-  return behavior(state,await self.get_emotions(chat_id),bond,absence_hours=absence)
+  return behavior(state,await self.get_emotions(chat_id),bond,absence_hours=absence,night=self._night())
 
 def appraisal_to_delta(appraisal):
  a=appraisal.values() if hasattr(appraisal,'values') else {k:v for k,v in appraisal.items() if v is not None}; scale=a.get('intensity',.35); val=a.get('valence',0)*scale
