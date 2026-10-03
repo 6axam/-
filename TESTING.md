@@ -83,6 +83,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 200 passed | 6.21 s | — | Full suite after affective behavior guidance. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_history.py tests/test_affective_appraisal.py -q` | 3 passed | 0.23 s | — | Append-only Unicode affective history and appraisal checks. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 201 passed | 9.05 s | — | Full suite after affective transition history. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_episodic_memory.py tests/test_context_budget.py tests/test_lifecycle_initiative.py -q` | 26 passed | 0.83 s | — | V2 episodic snapshots, compact context, semantic floor and open-loop checks. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 202 passed | 8.96 s | — | Full suite after affective episodic continuity. |
 
 ## Maintenance rule
 

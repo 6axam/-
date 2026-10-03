@@ -213,7 +213,10 @@ class ContextBuilder:
             episodes = await self.episodic_memory.relevant(chat_id, user_turn, self.episodic_memory_max_items)
             lines=[]
             for row in episodes:
-                line=f"[id={row['id']} | {'open' if row['unresolved'] else 'resolved'} | {row['kind']} | confidence={row['confidence']:.2f}] event: {row['summary']}"
+                snapshot = self.episodic_memory._snapshot(row['emotion_snapshot'])
+                salient = snapshot.get('salient_emotions', {})
+                affect_hint = f" | affect: {', '.join(list(salient)[:3])}" if salient else ""
+                line=f"[id={row['id']} | {'open' if row['unresolved'] else 'resolved'} | {row['kind']} | confidence={row['confidence']:.2f}{affect_hint}] event: {row['summary']}"
                 thought=f"\nthought: {self._truncate_to_budget(row['reflection'], 120)}" if row['reflection'] else ''
                 full=line+thought
                 candidate='\n'.join([*lines,full])

@@ -24,6 +24,16 @@ async def test_unrelated_important_episodes_do_not_bypass_relevance(tmp_path):
  await db.close()
 
 @pytest.mark.asyncio
+async def test_v2_snapshot_is_immutable_and_resonance_cannot_bypass_semantics(tmp_path):
+ db=Database(f"sqlite:///{tmp_path/'e.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); s=EmotionalState()
+ snap={'version':2,'chemistry':{'valence':.1,'arousal':.9,'social_safety':.1,'attachment':.9,'stress':.9,'grief_load':.8,'resentment':.8,'vulnerability':.9},'salient_emotions':{'hurt':.9},'behavior':{'avoidance':.8}}
+ ident=await m.apply(1,MemoryEpisode(kind='shared_event',summary='настройка голоса',importance=.8),s,affective_snapshot=snap)
+ row=await db.fetchone('SELECT emotion_snapshot FROM episodic_memories WHERE id=?',(ident,)); assert json.loads(row['emotion_snapshot'])==snap
+ assert await m.relevant(1,'привет',current_affective=snap['chemistry']) == []
+ assert (await m.relevant(1,'голоса',current_affective=snap['chemistry']))[0]['id']==ident
+ await db.close()
+
+@pytest.mark.asyncio
 async def test_superseded_is_not_retrieved_and_chats_are_isolated(tmp_path):
  db=Database(f"sqlite:///{tmp_path/'e.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); s=EmotionalState()
  old=await m.apply(1,MemoryEpisode(kind='user_update',summary='используем byteplus',importance=.8),s)

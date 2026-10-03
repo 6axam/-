@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.5 — Affective episodic continuity
+`unreleased` · 2026-10-03
+
+Episodes now retain immutable post-event V2 affect snapshots, while retrieval uses a small semantic-floor-bound resonance tie-breaker.
+
 ## v1.21.4 — Affective transition history
 `unreleased` · 2026-10-03
 
