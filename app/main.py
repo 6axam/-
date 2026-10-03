@@ -165,7 +165,8 @@ async def main():
     async def flush(chat_id, messages):
         if not messages: return
         user_id = messages[-1].from_user.id
-        await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages))
+        force_now = any(ConversationManager.TEST_WAKE_PHRASE in (message.text or message.caption or "").lower() for message in messages)
+        await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages), force_now=force_now)
     buffer = IncomingBuffer(s.debounce_seconds,flush)
     initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
     manager.initiative_scheduler = initiative

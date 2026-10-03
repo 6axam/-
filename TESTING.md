@@ -87,6 +87,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 202 passed | 8.96 s | — | Full suite after affective episodic continuity. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_conversation.py tests/test_delayed_cancellation.py tests/test_emotion_lifecycle.py tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_affective_profile.py tests/test_episodic_memory.py tests/test_llm.py -q` | 33 passed | 1.17 s | — | Production conversation-to-episode snapshot lifecycle, affective mutation safety, cancellation, provider failure and structured-output repair coverage. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.17 s | — | Full suite after connecting canonical post-event V2 snapshots to production episode creation. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_read_scheduler.py tests/test_presence_replies.py tests/test_time_availability.py tests/test_conversation.py -q` | 36 passed | 4.61 s | — | Test-mode read scheduling, presence bypass and normal conversation lifecycle regression coverage. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.01 s | — | Full suite before publishing the owner test-mode wake phrase. |
 
 ## Maintenance rule
 

@@ -47,7 +47,7 @@ class ReadScheduler:
     def bind(self, callback):
         self.on_messages_read = callback
 
-    async def schedule(self, user_id: int, chat_id: int, boundary_message_id: int):
+    async def schedule(self, user_id: int, chat_id: int, boundary_message_id: int, *, force_now: bool = False):
         state = await self.presence.state(chat_id)
         existing = await self.db.fetchone(
             "SELECT * FROM scheduled_reads WHERE chat_id=? AND status='pending' ORDER BY id DESC LIMIT 1", (chat_id,)
@@ -59,13 +59,15 @@ class ReadScheduler:
                     "UPDATE scheduled_reads SET boundary_message_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
                     (boundary, existing["id"]),
                 )
+            if force_now:
+                await self.db.execute("UPDATE scheduled_reads SET read_after=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'", (self.now().strftime("%Y-%m-%d %H:%M:%S"), existing["id"]))
             log.info("read_coalesced chat_id=%s boundary_message_id=%s read_after=%s", chat_id, boundary, existing["read_after"])
             return existing["id"]
 
         active = await self.db.chat_is_active(chat_id, self.timing.settings.active_conversation_window_seconds)
         now = self.now()
-        delay = self.timing.delay(state, active_conversation=active)
-        if state["availability"] == "sleep" and state["sleep_until"]:
+        delay = 0 if force_now else self.timing.delay(state, active_conversation=active)
+        if not force_now and state["availability"] == "sleep" and state["sleep_until"]:
             wake = datetime.strptime(state["sleep_until"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
             read_at = wake + timedelta(seconds=delay)
         else:

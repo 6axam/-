@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.7 — Test-mode wake phrase
+`unreleased` · 2026-10-03
+
+The explicit owner test phrase can bypass read delays and temporary presence states without changing the persisted routine.
+
 ## v1.21.6 — Production affective episode snapshots
 `unreleased` · 2026-10-03
 

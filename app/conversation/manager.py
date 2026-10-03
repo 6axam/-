@@ -5,6 +5,7 @@ from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTi
 log = logging.getLogger(__name__)
 
 class ConversationManager:
+    TEST_WAKE_PHRASE = "аня, режим теста"
     def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
@@ -98,6 +99,12 @@ class ConversationManager:
             return generation
         self.generations[chat_id] = generation
         daily_state = await self.presence.state(chat_id) if self.presence else None
+        test_wake = self.TEST_WAKE_PHRASE in text.lower()
+        if test_wake and daily_state and daily_state.get("availability") in {"sleep", "busy", "away"}:
+            # A deliberately narrow local test escape hatch. It neither edits
+            # the persisted routine nor cancels future sleep/event behaviour.
+            log.info("test_wake_phrase_bypasses_presence chat_id=%s availability=%s", chat_id, daily_state["availability"])
+            return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
         if daily_state and daily_state["availability"] == "sleep":
             await self.scheduler.schedule_at(user_id, chat_id, generation, daily_state["sleep_until"], "normal")
             log.info("presence_sleep_defers_turn chat_id=%s until=%s", chat_id, daily_state["sleep_until"])
