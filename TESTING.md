@@ -90,6 +90,7 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_read_scheduler.py tests/test_presence_replies.py tests/test_time_availability.py tests/test_conversation.py -q` | 36 passed | 4.61 s | — | Test-mode read scheduling, presence bypass and normal conversation lifecycle regression coverage. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.01 s | — | Full suite before publishing the owner test-mode wake phrase. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_bond.py tests/test_affective_appraisal.py tests/test_database.py -q` | 8 passed | 0.40 s | — | Persistent bond migration, conservative seeding, slow damage and repair, appraisal schema. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_relationship_bond.py tests/test_episodic_memory.py -q` | 17 passed | 0.50 s | — | Learned attachment, state driven behavior range, jealousy trigger, absence longing, bond and episode compatibility. |
 
 ## Maintenance rule
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.9 — Relationship affective behavior
+`unreleased` · 2026-10-03
+
+Attachment now drifts toward learned bond; relationship signals drive jealousy and distinct longing, hostility, regulation, contact, protest, repair and expression factors.
+
 ## v1.21.8 — Persistent relationship bond
 `unreleased` · 2026-10-03
 
