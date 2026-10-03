@@ -108,3 +108,39 @@ class RelationshipBondManager:
         if after != before:
             await self._save(chat_id, after)
         return before, after
+
+
+def dominant_motive(behavior, emotions):
+    """Select one invitation to the existing initiative model; no extra call."""
+    b = behavior.values()
+    e = emotions.values()
+    scores = {
+        'care': b['warmth_expression'] * .7 + b['contact_drive'] * .3,
+        'curiosity': e['curiosity'],
+        'longing': b['longing'],
+        'protest': b['protest_drive'],
+        'jealousy': e['jealousy'],
+        'repair': b['repair_drive'],
+        'sharing': e['interest'] * .7 + b['response_energy'] * .3,
+        'boredom': e['boredom'],
+        'playfulness': b['playfulness'],
+    }
+    return max(scores, key=scores.get)
+
+
+def relationship_context(bond, behavior, *, motive=None):
+    values = bond.values()
+    fields = (
+        ('bond', values['bond_strength']), ('trust', values['relational_trust']),
+        ('security', values['relationship_security']), ('love_strength', values['love_strength']),
+        ('rupture', values['rupture_load']), ('longing', behavior.longing),
+        ('fear_of_loss', behavior.fear_of_loss), ('protest_drive', behavior.protest_drive),
+        ('repair_drive', behavior.repair_drive), ('contact_drive', behavior.contact_drive),
+        ('rumination_drive', behavior.rumination_drive),
+        ('regulation_capacity', behavior.regulation_capacity),
+        ('message_burst_drive', behavior.message_burst_drive),
+        ('caps_drive', behavior.caps_drive), ('profanity_drive', behavior.profanity_drive),
+    )
+    return ('RELATIONSHIP STATE\n' + '; '.join(f'{name}={value:.2f}' for name, value in fields)
+            + (f'; dominant_motive={motive}' if motive else '')
+            + '\nPrivate learned continuity. Love does not require a love declaration. Current affect and event control expression; never quote scores.')

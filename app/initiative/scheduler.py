@@ -3,6 +3,7 @@ import logging
 import random
 import uuid
 
+from app.actions.models import ActionType
 from app.llm.schemas import LLMRequest
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class InitiativeScheduler:
         affective = getattr(conversation_context, "affective_engine", None)
         if affective:
             behavior = await affective.get_behavior(chat_id)
-            base *= max(.45, min(1.35, .65 + behavior.initiative_drive * .45 + behavior.social_seeking * .2 - behavior.avoidance * .3))
+            base *= max(.1, min(1.7, .25 + behavior.contact_drive * 1.4 + behavior.protest_drive * .25 + behavior.repair_drive * .2 - behavior.avoidance * .5 - (1 - behavior.response_energy) * .5))
         pull = (state["social_need"] - .45) + (state["curiosity"] - .55) + (state["warmth"] - .65)
         resistance = (state["fatigue"] - .25) + (state["hurt"] - .02) + (state["irritation"] - .05) + (state["anxiety"] - .10)
         probability = base * (1 + pull * .35 - resistance * .30)
@@ -115,7 +116,17 @@ class InitiativeScheduler:
             log.info("initiative_cancelled_stale chat_id=%s basis=%s", chat_id, basis)
             return False
         generation = str(uuid.uuid4()); self.manager.generations[chat_id] = generation
-        sent = await self.manager.enqueue_initiative(chat_id, generation, decision.actions)
+        # One accepted event can contain a bounded emotional burst, not a new
+        # scheduler event per bubble. The normal queue handles their cadence.
+        text_count = 0
+        actions = []
+        for action in decision.actions:
+            if action.type == ActionType.text:
+                text_count += 1
+                if text_count > 6:
+                    continue
+            actions.append(action)
+        sent = await self.manager.enqueue_initiative(chat_id, generation, actions)
         if sent:
             await self.db.execute("INSERT INTO initiative_history(chat_id,reason,basis,kind) VALUES(?,?,?,?)", (chat_id, decision.reason, basis, decision.kind))
             if basis == "bedtime":

@@ -11,7 +11,7 @@ def test_character_prompt_keeps_identity_voice_and_independence():
     prompt = character_prompt()
     for trait in (
         "Тебя зовут Аня",
-        "близкая интернет-собеседница",
+        "интернет-собеседница",
         "не AI-ассистент",
         "собственные вкусы, мнения",
         "Не подстраивай позицию",
@@ -25,17 +25,14 @@ def test_character_prompt_keeps_identity_voice_and_independence():
 def test_character_prompt_keeps_emotional_range_and_relationship_boundaries():
     prompt = character_prompt()
     for trait in (
-        "ты его любишь",
-        "заметно ревнивая",
-        "конкретный романтический интерес",
-        "цундере-нотка",
-        "не обнуляй его лишь ради удобной деэскалации",
-        "Сильная эмоция важнее идеально зрелого",
+        "конкретное отношение к Максиму приходит из текущего RELATIONSHIP STATE",
+        "эмоциональный, упрямый, иногда импульсивный темперамент",
+        "текущий event, отношения и affective state решают",
         "Не хардкодь одно настроение",
-        "не эмоциональным шантажом",
         "не требуй доказательств любви",
     ):
         assert trait in prompt
+    assert "ты его любишь" not in prompt.lower()
 
 
 def test_character_prompt_delegates_action_schema_and_user_details_elsewhere():

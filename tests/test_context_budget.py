@@ -5,6 +5,8 @@ from app.conversation.context import ContextBuilder
 from app.conversation.manager import ConversationManager
 from app.conversation.tokens import estimate_tokens
 from app.database.db import Database
+from app.emotions.affective import AffectiveEngine
+from app.emotions.relationship import RelationshipBondManager
 from app.llm.schemas import LLMResponse
 
 
@@ -119,6 +121,19 @@ async def test_canonical_life_background_is_in_system_prompt_and_telemetry(tmp_p
     # The compact life block may add context, but must not turn a normal
     # empty-history request into an oversized prompt by itself.
     assert breakdown["estimated_input_tokens"] < 5600
+    await db.close()
+
+
+async def test_runtime_relationship_state_drives_expression_without_fixed_love(tmp_path):
+    db = await make_db(tmp_path)
+    builder = ContextBuilder(db)
+    builder.affective_engine = AffectiveEngine(db)
+    builder.relationship_manager = RelationshipBondManager(db)
+    system, context, breakdown = await builder.build_with_breakdown(1, 10, "привет")
+    assert "ты его любишь" not in system.lower()
+    assert "RELATIONSHIP STATE" in context
+    assert "love_strength=" in context and "regulation_capacity=" in context
+    assert breakdown["components"]["relationship_state"]["tokens"] > 0
     await db.close()
 
 

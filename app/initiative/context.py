@@ -40,7 +40,7 @@ class InitiativeContextBuilder:
         history_lines = self._bounded(list(reversed(rendered)), self.recent_history_token_budget)
         history = "\n".join(reversed(history_lines)) or "(none)"
         character = "CORE CHARACTER\n" + read_prompt("character.md") + "\n\nLIFE BACKGROUND\n" + read_prompt("life_background.md") + "\n\n" + read_prompt("initiative.md")
-        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "bedtime_state": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "episodic_open_loops": component_size(""), "recent_initiatives": component_size("")}
+        components = {"core_character": component_size(character), "personality_state": component_size(""), "emotional_state": component_size(""), "relationship_state": component_size(""), "current_life_state": component_size(""), "eligibility_lifecycle": component_size(""), "bedtime_state": component_size(""), "recent_conversation": component_size(history), "relevant_memories": component_size(""), "anya_life_events": component_size(""), "episodic_open_loops": component_size(""), "recent_initiatives": component_size("")}
         blocks = []
         if cc.personality:
             values = "\n".join(f"- {r['category']} / {r['subject']}: {r['value']}" for r in await cc.personality.relevant(history, limit=6)) or "(none yet)"
@@ -53,6 +53,14 @@ class InitiativeContextBuilder:
             state = await cc.emotional_state.get()
             block = f"EMOTIONAL STATE\nmood={state['mood']}; energy={state['energy']:.2f}; social_energy={state['social_energy']:.2f}; offense={state['offense_level']:.2f}; interest={state['conversation_interest']:.2f}"
             blocks.append(block); components["emotional_state"] = component_size(block)
+        if getattr(cc, "relationship_manager", None) and getattr(cc, "affective_engine", None):
+            from app.emotions.relationship import dominant_motive, relationship_context
+            bond = await cc.relationship_manager.get(chat_id)
+            behavior = await cc.affective_engine.get_behavior(chat_id)
+            emotions = await cc.affective_engine.get_emotions(chat_id)
+            motive = dominant_motive(behavior, emotions)
+            block = relationship_context(bond, behavior, motive=motive)
+            blocks.append(block); components["relationship_state"] = component_size(block)
         event_text = "active_event=false"
         if event:
             event_text = f"active_event=true; title={event['title']}; availability={event['availability']}; mentionable=true" if event["mentionable"] else f"active_event=true; availability={event['availability']}; mentionable=false"

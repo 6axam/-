@@ -101,7 +101,7 @@ class ContextBuilder:
         selected_history = self._select_history([self._render(row) for row in messages])
         history = "\n".join(selected_history)
 
-        character = "IMMUTABLE CORE PERSONALITY\n" + read_prompt("character.md")
+        character = "CORE TEMPERAMENT\n" + read_prompt("character.md")
         life_background = "LIFE BACKGROUND\n" + read_prompt("life_background.md")
         profile = "USER PROFILE\n" + read_prompt("user_profile.md")
         response = response_rules()
@@ -131,6 +131,7 @@ class ContextBuilder:
             "system_media_rule": component_size(media_rule),
             "personality_state": component_size(""), "emotional_state": component_size(""),
             "affective_state": component_size(""),
+            "relationship_state": component_size(""),
             "reaction_context": component_size(""), "recent_image_metadata": component_size(""),
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
             "episodic_memories": component_size(""),
@@ -245,6 +246,11 @@ class ContextBuilder:
             salient = sorted(emotions.values().items(), key=lambda item: item[1], reverse=True)[:10]
             block = "AFFECTIVE STATE\nChemistry: " + regulators + "\nSalient emotions: " + "; ".join(f"{name}={value:.2f}" for name, value in salient) + "\nBehavior: " + "; ".join(f"{name}={value:.2f}" for name, value in behavior.values().items()) + "\nInternal guidance only: current user event may immediately shape this reply; never expose scores."
             blocks.append(block); components["affective_state"] = component_size(block)
+            if getattr(self, "relationship_manager", None):
+                from app.emotions.relationship import relationship_context
+                bond = await self.relationship_manager.get(chat_id)
+                relational = relationship_context(bond, behavior)
+                blocks.append(relational); components["relationship_state"] = component_size(relational)
         elif self.emotional_state:
             state = await self.emotional_state.get()
             block = f"EMOTIONAL STATE\nmood={state['mood']}; energy={state['energy']:.2f}; social_energy={state['social_energy']:.2f}; offense={state['offense_level']:.2f}; interest={state['conversation_interest']:.2f}; availability={state['availability']}"

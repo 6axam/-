@@ -24,6 +24,7 @@ class ConversationManager:
         # older batch is still entering `handle_turn`.
         self.interrupt_versions: dict[int, int] = {}
         self.requests: dict[int, asyncio.Task] = {}
+        self.test_mode_chats: set[int] = set()
         # One lightweight Telegram typing session per active generation.  It is
         # deliberately separate from ActionQueue typing, which happens just
         # before each individual outgoing message.
@@ -100,6 +101,8 @@ class ConversationManager:
         self.generations[chat_id] = generation
         daily_state = await self.presence.state(chat_id) if self.presence else None
         test_wake = self.TEST_WAKE_PHRASE in text.lower()
+        if test_wake:
+            self.test_mode_chats.add(chat_id)
         if test_wake and daily_state and daily_state.get("availability") in {"sleep", "busy", "away"}:
             # A deliberately narrow local test escape hatch. It neither edits
             # the persisted routine nor cancels future sleep/event behaviour.
@@ -241,7 +244,7 @@ class ConversationManager:
             affective = getattr(self, "affective_engine", None)
             if affective:
                 emotions_before = (await affective.get_emotions(chat_id)).values()
-                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal)
+                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats)
                 from app.emotions.history import AffectiveHistory
                 AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values())
                 affective_snapshot = self.episodic_memory.build_affective_snapshot(current_emotions, _profile, _behavior) if self.episodic_memory else None
@@ -252,6 +255,8 @@ class ConversationManager:
                 await self.episodic_memory.apply(chat_id, response.memory_episode, current_emotions, affective_snapshot=affective_snapshot, resolve_episode_ids=response.resolve_episode_ids, generation_id=generation, message_id=target_message_id, exposed_ids=set(breakdown.get('retrieved_episode_ids', [])))
         elif self.emotional_state:
             await self.emotional_state.apply(response.emotional_update)
+        if "режим теста закончен" in text.lower():
+            self.test_mode_chats.discard(chat_id)
         if self.lifecycle:
             await self.lifecycle.apply(chat_id, response.conversation)
         if self.memory_extractor and self.memory_manager:

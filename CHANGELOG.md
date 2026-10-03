@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.0 — Relationship driven expression and initiative
+`unreleased` · 2026-10-03
+
+Removed fixed love from character, exposed learned relationship guidance, weighted contact in initiative and bounded autonomous message bursts.
+
 ## v1.21.9 — Relationship affective behavior
 `unreleased` · 2026-10-03
 

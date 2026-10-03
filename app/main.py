@@ -84,6 +84,8 @@ async def main():
     personality, emotional_state = PersonalityManager(db), None
     emotion_engine = EmotionalEngine(db, s.timezone)
     affective_engine = AffectiveEngine(db)
+    from app.emotions.relationship import RelationshipBondManager
+    relationship_manager = RelationshipBondManager(db)
     episodic_memory = EpisodicMemoryManager(db)
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
@@ -110,6 +112,7 @@ async def main():
                              episodic_memory_token_budget=s.episodic_memory_context_token_budget,
                              episodic_memory_max_items=s.episodic_memory_max_context_items)
     context.affective_engine = affective_engine
+    context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
     presence = DailyPresenceManager(
         db, s.timezone, s.sleep_start_hour, s.wake_hour,

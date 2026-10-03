@@ -193,6 +193,39 @@ async def test_emotional_spontaneous_modifier_is_bounded_and_after_safety_rails(
     await db.close()
 
 
+async def test_contact_drive_changes_spontaneous_probability_after_gates(tmp_path):
+    db = await db_for(tmp_path)
+    class Engine:
+        async def get(self, _chat):
+            from app.emotions.model import EmotionalState
+            return EmotionalState()
+    class Affective:
+        contact = .9
+        async def get_behavior(self, _chat):
+            return SimpleNamespace(contact_drive=self.contact, protest_drive=.5, repair_drive=.2,
+                                   avoidance=.05, response_energy=.8)
+    affective = Affective()
+    context = SimpleNamespace(conversation_context=SimpleNamespace(emotion_engine=Engine(), affective_engine=affective))
+    scheduler = InitiativeScheduler(db, InitiativeManager(DecisionProvider(InitiativeDecision(should_message=False, reason='x'))),
+                                    None, None, context, settings())
+    high = await scheduler._spontaneous_probability(10)
+    affective.contact = .05
+    low = await scheduler._spontaneous_probability(10)
+    assert high > low + .25
+    await db.close()
+
+
+async def test_autonomous_burst_is_one_event_with_six_bubble_cap(tmp_path):
+    decision = InitiativeDecision(should_message=True, reason='thought', actions=[Action(type=ActionType.text, text=str(i)) for i in range(8)])
+    db, scheduler, provider, manager = await prepared_scheduler(tmp_path, decision)
+    assert await scheduler._decide(1, 10)
+    assert provider.calls == 1
+    assert len(manager.sent) == 1
+    assert len(manager.sent[0][2]) == 6
+    assert (await db.fetchone('SELECT COUNT(*) AS n FROM initiative_history WHERE chat_id=?', (10,)))['n'] == 1
+    await db.close()
+
+
 async def test_new_message_during_initiative_llm_call_cancels_delivery(tmp_path):
     db = await db_for(tmp_path)
     await db.ensure_user(1, "owner")

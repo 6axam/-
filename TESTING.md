@@ -91,6 +91,7 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.01 s | — | Full suite before publishing the owner test-mode wake phrase. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_bond.py tests/test_affective_appraisal.py tests/test_database.py -q` | 8 passed | 0.40 s | — | Persistent bond migration, conservative seeding, slow damage and repair, appraisal schema. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_affective_appraisal.py tests/test_affective_chemistry.py tests/test_relationship_bond.py tests/test_episodic_memory.py -q` | 17 passed | 0.50 s | — | Learned attachment, state driven behavior range, jealousy trigger, absence longing, bond and episode compatibility. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_character_prompt.py tests/test_lifecycle_initiative.py tests/test_initiative_context.py tests/test_context_budget.py tests/test_conversation.py tests/test_presence_replies.py -q` | 47 passed | 5.31 s | — | Relationship driven prompt and context, initiative probability and burst cap, conversation and presence gates. |
 
 ## Maintenance rule
 
