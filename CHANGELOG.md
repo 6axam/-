@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.8 — Persistent relationship bond
+`unreleased` · 2026-10-03
+
+Added chat-scoped slow relationship history, conservative migration seeding, bounded trust and rupture updates, and inertial love strength.
+
 ## v1.21.7 — Test-mode wake phrase
 `unreleased` · 2026-10-03
 

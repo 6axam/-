@@ -146,6 +146,12 @@ class AffectiveAppraisal(BaseModel):
     uncertainty: float | None = Field(default=None, ge=0, le=1)
     humor: float | None = Field(default=None, ge=0, le=1)
     closeness: float | None = Field(default=None, ge=0, le=1)
+    replacement_threat: float | None = Field(default=None, ge=0, le=1)
+    rival_salience: float | None = Field(default=None, ge=0, le=1)
+    repair_attempt: float | None = Field(default=None, ge=0, le=1)
+    dismissal: float | None = Field(default=None, ge=0, le=1)
+    care: float | None = Field(default=None, ge=0, le=1)
+    betrayal: float | None = Field(default=None, ge=0, le=1)
     def values(self): return {key:value for key,value in self.model_dump().items() if value is not None}
 
 class MemoryEpisode(BaseModel):

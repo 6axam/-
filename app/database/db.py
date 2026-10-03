@@ -337,6 +337,20 @@ MIGRATIONS = [
       last_updated_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS relationship_bonds (
+      chat_id INTEGER PRIMARY KEY,
+      bond_strength REAL NOT NULL CHECK(bond_strength BETWEEN 0 AND 1),
+      relational_trust REAL NOT NULL CHECK(relational_trust BETWEEN 0 AND 1),
+      familiarity REAL NOT NULL CHECK(familiarity BETWEEN 0 AND 1),
+      care_investment REAL NOT NULL CHECK(care_investment BETWEEN 0 AND 1),
+      rupture_load REAL NOT NULL CHECK(rupture_load BETWEEN 0 AND 1),
+      relationship_security REAL NOT NULL CHECK(relationship_security BETWEEN 0 AND 1),
+      love_strength REAL NOT NULL CHECK(love_strength BETWEEN 0 AND 1),
+      meaningful_interactions INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
 ]
 
 

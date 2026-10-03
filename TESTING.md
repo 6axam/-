@@ -89,6 +89,7 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.17 s | — | Full suite after connecting canonical post-event V2 snapshots to production episode creation. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_read_scheduler.py tests/test_presence_replies.py tests/test_time_availability.py tests/test_conversation.py -q` | 36 passed | 4.61 s | — | Test-mode read scheduling, presence bypass and normal conversation lifecycle regression coverage. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 203 passed | 9.01 s | — | Full suite before publishing the owner test-mode wake phrase. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_bond.py tests/test_affective_appraisal.py tests/test_database.py -q` | 8 passed | 0.40 s | — | Persistent bond migration, conservative seeding, slow damage and repair, appraisal schema. |
 
 ## Maintenance rule
 
