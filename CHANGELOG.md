@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.21.4 — Affective transition history
+`unreleased` · 2026-10-03
+
+Added local append-only JSONL affective transition history and an offline developer CLI viewer.
+
 ## v1.21.3 — Affective behavior guidance
 `unreleased` · 2026-10-03
 

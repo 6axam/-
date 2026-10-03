@@ -233,7 +233,10 @@ class ConversationManager:
         if self.emotion_engine and not provider_failed:
             affective = getattr(self, "affective_engine", None)
             if affective:
+                emotions_before = (await affective.get_emotions(chat_id)).values()
                 _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal)
+                from app.emotions.history import AffectiveHistory
+                AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values())
             else:
                 current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
             if self.episodic_memory:
