@@ -1,6 +1,6 @@
 """Persistent affective chemistry, deliberately deterministic and per-chat."""
 from __future__ import annotations
-import json, math
+import json, math, re
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -83,3 +83,37 @@ def appraisal_to_delta(appraisal):
  d={'valence':val*.08,'reward_sensitivity':max(0,val)*.025,'social_safety':a.get('warmth',0)*.05+a.get('closeness',0)*.04-a.get('rejection',0)*.08-a.get('dismissal',0)*.04+a.get('repair_attempt',0)*.05,'attachment':(a.get('warmth',0)+a.get('closeness',0))*.01,'resentment':a.get('rejection',0)*.05+a.get('other_blame',0)*.035+a.get('betrayal',0)*.04,'vulnerability':a.get('rejection',0)*.05+a.get('replacement_threat',0)*.04,'grief_load':a.get('loss',0)*.06,'energy':-a.get('loss',0)*.025,'frustration':(a.get('frustration',0)+a.get('other_blame',0)*.5+a.get('dismissal',0)*.5)*.06-a.get('repair_attempt',0)*.03,'stress':(a.get('threat',0)+a.get('uncertainty',0)+a.get('frustration',0)*.4+a.get('replacement_threat',0)*.5)*.06-a.get('relief',0)*.06,'threat':a.get('threat',0)*.08+a.get('uncertainty',0)*.02+a.get('replacement_threat',0)*.06-a.get('relief',0)*.08-a.get('repair_attempt',0)*.04,'arousal':(a.get('threat',0)+a.get('novelty',0)+a.get('humor',0)*.3+a.get('replacement_threat',0)*.5)*.06,'self_worth':a.get('achievement',0)*.03-a.get('self_blame',0)*.03,'novelty_drive':a.get('novelty',0)*.03}
  caps={'attachment':.02,'self_worth':.03,'resentment':.05,'grief_load':.06}
  return {k:max(-caps.get(k,.08),min(caps.get(k,.08),v)) for k,v in d.items() if v}
+
+
+_DIRECT_INSULT = re.compile(
+ r'^\s*(?:ну\s+|и\s+вообще\s+)?ты\s+(?:мерзк(?:ая|ий)|туп(?:ая|ой)|отвратительн(?:ая|ый)|'
+ r'мне\s+(?:правда\s+)?(?:особо\s+)?не\s+(?:особо\s+)?нужн(?:а|ен)|легко\s+заменим(?:а|ый))\b', re.IGNORECASE)
+_PLAYFUL_EVIDENCE = re.compile(r'ахах|хаха|😂|🤣|😹|шучу|люблю\s+тебя|не\s+всерь[её]з', re.IGNORECASE)
+
+
+def sanitize_appraisal(appraisal, user_message=''):
+ """Bound contradictions; only unmistakable direct insults get a lexical fallback."""
+ values=appraisal.values()
+ text=user_message or ''
+ playful=bool(_PLAYFUL_EVIDENCE.search(text))
+ direct=bool(_DIRECT_INSULT.search(text)) and not playful
+ changes={}
+ if direct:
+  # This narrow fallback forbids positive interpersonal chemistry when Luna
+  # misreads an obvious direct insult as friendly banter.
+  changes.update(valence=min(values.get('valence',0),-.6),intensity=max(values.get('intensity',0),.65),
+   social_relevance=max(values.get('social_relevance',0),.7),
+   dismissal=max(values.get('dismissal',0),.65),other_blame=max(values.get('other_blame',0),.5),
+   frustration=max(values.get('frustration',0),.35))
+  if re.search(r'\bне\s+(?:особо\s+)?нужн|\bзаменим',text.casefold()):
+   changes['rejection']=max(values.get('rejection',0),.7)
+ negative_valence=changes.get('valence',values.get('valence',0)) <= -.35
+ social_aversive=max(changes.get('dismissal',values.get('dismissal',0)),
+                    changes.get('rejection',values.get('rejection',0)),
+                    changes.get('other_blame',values.get('other_blame',0)))
+ if (negative_valence and social_aversive >= .4 and not playful) or (social_aversive >= .65 and not playful) or direct:
+  if social_aversive >= .65 and not playful and any(values.get(key,0) > .15 for key in ('warmth','closeness','humor')):
+   changes['valence']=min(changes.get('valence',values.get('valence',0)),0)
+  for key in ('warmth','closeness','humor','care'):
+   if values.get(key,0) > .08: changes[key]=.08
+ return appraisal.model_copy(update=changes) if changes else appraisal

@@ -96,6 +96,15 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 220 passed | 9.29 s | — | Full suite after Relationship V3 implementation. |
 | 2026-10-03 | `./.venv/bin/python -m pytest tests/test_relationship_sequences.py tests/test_relationship_bond.py tests/test_affective_history.py tests/test_episodic_memory.py tests/test_emotion_lifecycle.py tests/test_lifecycle_initiative.py -q` | 34 passed | 0.85 s | — | Post-commit targeted verification of relationship sequences, observability and lifecycle gates. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 220 passed | 9.26 s | — | Post-commit full Relationship V3 suite. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_relationship_bond.py tests/test_affective_profile.py -q` | 17 passed | 0.42 s | — | Appraisal prompt, sanitizer, transform, bond and behavior baseline before range adjustment. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_relationship_bond.py -q` | 17 passed, 1 failed | 0.39 s | — | Apathy and inhibition regression exposed excessive expression after range adjustment. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_affective_profile.py tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_relationship_bond.py -q` | 18 passed | 0.35 s | — | Rechecked behavior range with depleted-state expression bound. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_relationship_bond.py tests/test_affective_profile.py tests/test_relationship_sequences.py -q` | 24 passed | 0.46 s | — | Live-like insult, rejection and absence sequence plus semantic sanitizer and relationship state. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_relationship_bond.py tests/test_affective_profile.py tests/test_relationship_sequences.py -q` | 24 passed | 0.45 s | — | Rechecked transform and production path after affection and behavior assertions. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_appraisal_semantics.py tests/test_affective_appraisal.py tests/test_affective_profile.py tests/test_relationship_bond.py tests/test_relationship_sequences.py tests/test_emotion_lifecycle.py tests/test_episodic_memory.py -q` | 31 passed | 0.67 s | — | Targeted appraisal schema, prompt, sanitizer, transform, bond, behavior, lifecycle and episode coverage. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 227 passed, 1 failed | 9.44 s | — | Full suite found context token budget exceeded by initial appraisal guidance. |
+| 2026-10-03 | `./.venv/bin/python -m pytest tests/test_context_budget.py tests/test_appraisal_semantics.py -q` | 16 passed | 0.47 s | — | Compact appraisal guidance and context budget recheck. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 228 passed | 9.38 s | — | Full suite after negative social appraisal correction. |
 
 ## Maintenance rule
 

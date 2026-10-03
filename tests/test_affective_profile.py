@@ -1,5 +1,5 @@
 from app.emotions.affective import AffectiveChemistry, REGULATOR_BASELINES
-from app.emotions.profile import EMOTION_NAMES, behavior, calculate
+from app.emotions.profile import EMOTION_NAMES, EmotionProfile, behavior, calculate
 from app.emotions.relationship import RelationshipBondState
 from app.llm.schemas import AffectiveAppraisal
 def chem(**changes):
@@ -41,3 +41,15 @@ def test_apathy_suppresses_contact_despite_absence():
  bond=RelationshipBondState(.9,.8,.8,.8,.1,.8,.85)
  b=behavior(c,e,bond,absence_hours=48)
  assert b.longing>.5 and b.initiative_drive<b.longing
+
+def test_moderate_hurt_and_anger_are_not_overregulated():
+ c=chem(attachment=.9,arousal=.4,energy=.55,inhibition=.5,frustration=.25,stress=.4,social_safety=.55)
+ values=calculate(c).values()
+ values.update(hurt=.4,anger=.1,resentment=.2,irritation=.09)
+ b=behavior(c,EmotionProfile(values),RelationshipBondState(.9,.8,.8,.8,.1,.8,.88))
+ assert b.patience < .55
+ assert b.irritability > .25
+ assert b.expression_intensity > .25
+ assert b.profanity_drive > .18
+ assert b.protest_drive > .18
+ assert b.regulation_capacity < .5

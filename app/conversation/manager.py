@@ -243,6 +243,8 @@ class ConversationManager:
         if self.emotion_engine and not provider_failed:
             affective = getattr(self, "affective_engine", None)
             if affective:
+                from app.emotions.affective import sanitize_appraisal
+                response.affective_appraisal = sanitize_appraisal(response.affective_appraisal, text)
                 emotions_before = (await affective.get_emotions(chat_id)).values()
                 relationship_before = (await affective.relationship_manager.get(chat_id)).values()
                 _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats, episode=response.memory_episode)

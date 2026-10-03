@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.2 — Negative social appraisal correction
+`unreleased` · 2026-10-03
+
+Clarified event appraisal semantics, added a narrow contradiction and direct insult guard, and made hurtful states less overregulated without weakening depleted behavior.
+
 ## v1.22.1 — Relationship transitions and regressions
 `unreleased` · 2026-10-03
 
