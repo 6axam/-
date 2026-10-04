@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -46,11 +47,18 @@ async def visual_builder(tmp_path, monkeypatch, rng):
 
 async def test_self_photo_pipeline_persists_visual_and_image_metadata(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "prompts").mkdir(); (tmp_path / "prompts" / "appearance.md").write_text("short dark hair, green eyes", encoding="utf-8")
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "appearance.md").write_text(
+        "The attached reference is the only source of stable physical identity.", encoding="utf-8"
+    )
+    (tmp_path / "assets" / "anya").mkdir(parents=True)
+    (tmp_path / "assets" / "anya" / "reference.jpg").write_bytes(b"reference-image")
     db = Database(f"sqlite:///{tmp_path / 'bot.sqlite'}"); await db.connect()
     class Provider:
         name="fake"; model="fake-image"
-        async def generate(self, prompt, references=None): self.prompt=prompt; return GeneratedImage(b"image")
+        async def generate(self, prompt, references=None):
+            self.prompt, self.references = prompt, references
+            return GeneratedImage(b"image")
     class Bot:
         async def send_photo(self, *_args, **kwargs):
             assert kwargs["photo"].data == b"image"
@@ -59,12 +67,25 @@ async def test_self_photo_pipeline_persists_visual_and_image_metadata(tmp_path, 
     provider=Provider(); executor=TelegramActionExecutor(Bot(), db, image_provider=provider, image_prompts=ImagePromptBuilder(db), image_daily_limit=2, image_cooldown_hours=1)
     action=Action(type=ActionType.image,image_intent=ImageIntent(kind="casual_photo",scene="shows she is bored",importance=.5))
     await executor.execute(QueuedAction(chat_id=1,generation_id="g",action=action))
-    assert "short dark hair" in provider.prompt and "OUTFIT" in provider.prompt
-    assert "Use the canonical reference only as an identity anchor." in provider.prompt
-    assert "Do not copy its expression, pose, outfit, camera angle or background" in provider.prompt
-    assert "Require dark brown eyes" not in provider.prompt
+    assert "REFERENCE IDENTITY" in provider.prompt and "OUTFIT" in provider.prompt
+    assert "only source of stable physical identity" in provider.prompt
+    assert "short dark hair" not in provider.prompt and "green eyes" not in provider.prompt
+    assert provider.references == [b"reference-image"]
     assert (await db.fetchone("SELECT status FROM generated_images"))["status"] == "sent"
     await db.close()
+
+
+def test_repository_identity_prompt_uses_reference_instead_of_fixed_traits():
+    prompt = Path("prompts/appearance.md").read_text(encoding="utf-8")
+    assert "only source of Anya's stable physical identity" in prompt
+    assert "current situation: mood, expression, time, place, activity, weather" in prompt
+    for obsolete_trait in (
+        "серо-зелёные",
+        "почти чёрные волосы",
+        "серебряным крестом",
+        "ногти обычно чёрные",
+    ):
+        assert obsolete_trait not in prompt.casefold()
 
 
 async def test_meme_does_not_need_appearance(tmp_path, monkeypatch):

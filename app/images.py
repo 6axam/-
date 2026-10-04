@@ -79,10 +79,10 @@ class ImagePromptBuilder:
       ],
     }
     micro_actions = {
-      "college": ["adjusting a backpack strap", "holding a notebook", "glancing at the phone screen", "tucking hair behind an ear", "pausing between classes"],
-      "home": ["adjusting a sleeve", "touching a necklace", "tucking hair behind an ear", "leaning on one arm", "glancing at the phone screen"],
+      "college": ["adjusting a backpack strap", "holding a notebook", "glancing at the phone screen", "adjusting a sleeve", "pausing between classes"],
+      "home": ["adjusting a sleeve", "holding a mug", "settling into a comfortable position", "leaning on one arm", "glancing at the phone screen"],
       "outside": ["adjusting a jacket", "shifting a bag strap", "pausing mid-step", "holding earbuds or a coffee", "looking briefly to the side"],
-      "generic": ["adjusting hair", "fixing a sleeve", "touching a necklace", "looking at the phone screen", "a small relaxed half-smile"],
+      "generic": ["adjusting a bag strap", "fixing a sleeve", "shifting posture naturally", "looking at the phone screen", "a small relaxed half-smile"],
     }
     framing_variants = {
       "front_selfie": ["chest-up framing", "waist-up framing with a slight downward phone angle", "face-and-shoulders framing with a little environment visible"],
@@ -98,7 +98,7 @@ class ImagePromptBuilder:
       ],
       "home": [
         "oversized dark T-shirt, soft pink Hello Kitty pajama pants, barefoot",
-        "loose ordinary T-shirt, comfortable home trousers, black-painted nails visible when natural",
+        "loose ordinary T-shirt and comfortable home trousers",
         "oversized T-shirt, pink Hello Kitty pajama pants, soft house slippers with small green alien-cat details",
       ],
       "sleep": ["relaxed sleepwear appropriate for home and the time of night"],
@@ -161,7 +161,7 @@ class ImagePromptBuilder:
         micro_action = self.rng.choice(self.micro_actions[place_key]) if self_present else "not applicable"
         framing = self.rng.choice(self.framing_variants[kind]) if self_present else variant
         parts=["SITUATION\n"+intent.scene+"\nTreat this as the primary moment of the image. Adapt pose, crop and nearby environment to it, while keeping the persistent world state.","CURRENT VISUAL STATE\n"+f"{now:%Y-%m-%d %H:%M}, {location}; {activity}",weather_block,"LIGHTING\n"+light,"ENVIRONMENT\n"+env,"PHOTO TYPE\n"+variant,"POSE\n"+pose,"MICRO-ACTION\n"+micro_action,"CAMERA / FRAMING\n"+framing,"NATURAL POSE / REALISM\n"+self.natural_pose_rules,"PHOTO CHARACTER\n"+style,"AVOID\nprofessional photography, fashion shoot, cinematic lighting, studio composition, glamour retouching, beauty-ad aesthetic, unexplained third-person photographer, mannequin-like posing, extreme body twisting, awkward arm extension, impossible shoulder angles, forced leg placement, exaggerated wide-leg stance, awkward full-body selfie distortion, dramatic runway posing unless explicitly requested, floating limbs or unnatural hand anatomy"]
-        if self_present: parts.insert(0,"IDENTITY / APPEARANCE\n"+appearance+"\nUse the canonical reference only as an identity anchor. Do not copy its expression, pose, outfit, camera angle or background; adapt these naturally to this scene."); parts.insert(2,"OUTFIT\n"+clothing)
+        if self_present: parts.insert(0,"REFERENCE IDENTITY\n"+appearance); parts.insert(2,"OUTFIT\n"+clothing)
         if custom: parts.append("USER VISUAL PREFERENCES\n"+custom+"\nApply these only when compatible with identity, current world state and the requested scene.")
         prompt="\n\n".join(parts); refs=[self.reference_path.read_bytes()] if self_present and self.reference_path.is_file() else []
         if self.debug: log.info("image_prompt kind=%s state=%s type=%s pose=%s micro_action=%s framing=%s reference_used=%s\n%s",kind,{"location":location,"activity":activity,"clothing":clothing},variant,pose,micro_action,framing,bool(refs),prompt)

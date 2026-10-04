@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.6 — Reference-driven image identity
+`unreleased` · 2026-10-05
+
+Made the canonical reference image the sole source of physical identity while keeping generated prompts focused on the current scene, mood, activity, lighting and framing.
+
 ## v1.22.5 — High-arousal expression execution
 `unreleased` · 2026-10-03
 

@@ -119,6 +119,10 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 238 passed | 6.69 s | — | Full suite after Emotional V3 tuning. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q tests/test_high_arousal_expression.py tests/test_current_expression.py tests/test_emotional_v3_tuning.py tests/test_context_budget.py` | 23 passed | 0.85 s | — | High-arousal surface gates, bounded CAPS/bursts, controlled and moderate conflict, memory safety, context budget and single-call lifecycle. |
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 243 passed | 10.49 s | — | Full suite after strengthening high-arousal expression execution. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q tests/test_image_generation.py tests/test_openrouter_images.py tests/test_context_budget.py` | 20 passed | 4.48 s | — | Reference-only identity prompt, dynamic scene construction, image provider payload and context budget. |
+| 2026-10-03 | `./.venv/bin/python -m pytest -q` | 244 passed | 9.85 s | — | Full suite after decoupling image prompts from fixed physical traits. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_image_generation.py tests/test_openrouter_images.py tests/test_context_budget.py` | 20 passed | 4.51 s | — | Pre-push verification of reference identity, situation-driven prompts, provider payload and context budget. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q` | 244 passed | 9.99 s | — | Pre-push full suite for reference-driven image identity. |
 
 ## Maintenance rule
 
