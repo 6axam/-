@@ -28,6 +28,7 @@ git diff --check
 | Daily presence and timing | `test_time_availability.py`, `test_presence_replies.py` | sleep/wake state, college rhythm, events and response timing. |
 | Telegram actions | `test_actions.py`, `test_reactions.py`, `test_emoji_filter.py`, `test_message_splitter.py` | sequential delivery, reactions, emoji policy and human-like message splitting. |
 | Media, stickers and images | `test_vision_semantic.py`, `test_semantic_production.py`, `test_image_generation.py`, `test_openrouter_images.py` | offline media/sticker pipeline, semantic retrieval and image generation/provider payloads. |
+| Read-only terminal observer | `test_tui.py` | Scene priority, emotion aggregation, relationship meters, compact layout, missing state and SQLite write protection. |
 
 ## Recent runs
 
@@ -129,6 +130,8 @@ git diff --check
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 261 passed | 10.29 s | — | Full suite after media and action delivery fixes. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_episodic_memory.py tests/test_initiative_context.py tests/test_emotional_v3_tuning.py` | 18 passed | 0.79 s | — | Phase 3 real-day open-loop age units, monotonic decay and long-lived importance weighting. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 263 passed | 9.99 s | — | Full suite after episodic open-loop age decay correction. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_tui.py` | 14 passed | 0.25 s | — | TUI scene resolution, particles, relationship display, compact shell, missing-state safety and read-only SQLite polling. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q` | 277 passed | 7.30 s | — | Full suite after adding the separate Textual terminal tamagotchi observer. |
 
 ## Maintenance rule
 

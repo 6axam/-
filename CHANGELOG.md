@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.23.0 — Read-only terminal tamagotchi
+`unreleased` · 2026-10-05
+
+Added a responsive Textual observer with scene animation, affective particles, relationship status, episodic summaries and guarded read-only SQLite polling alongside the Telegram bot.
+
 ## v1.22.9 — Episodic open-loop age units
 `unreleased` · 2026-10-05
 
