@@ -452,13 +452,57 @@ class Database:
             await self.execute(f"UPDATE messages SET conversation_turn_id=? WHERE chat_id=? AND telegram_message_id IN ({placeholders})", (turn_id, chat_id, *telegram_message_ids))
         return turn_id
 
-    async def recent_messages(self, chat_id: int, limit: int = 24, recent_media_hours: int = 24):
+    async def ensure_turn_for_batch(self, *, user_id: int, chat_id: int, merged_text: str,
+                                    telegram_message_ids: list[int]) -> int:
+        """Create one durable logical turn, or reuse it after a failed dispatch."""
+        if not telegram_message_ids:
+            raise ValueError("telegram_message_ids must not be empty")
+        placeholders = ",".join("?" for _ in telegram_message_ids)
+
+        def run():
+            rows = self.conn.execute(
+                f"SELECT telegram_message_id,conversation_turn_id FROM messages WHERE chat_id=? "
+                f"AND telegram_message_id IN ({placeholders})",
+                (chat_id, *telegram_message_ids),
+            ).fetchall()
+            existing = {row["conversation_turn_id"] for row in rows if row["conversation_turn_id"] is not None}
+            if existing:
+                if len(existing) != 1:
+                    raise RuntimeError("read batch spans multiple conversation turns")
+                turn_id = existing.pop()
+                self.conn.execute(
+                    f"UPDATE messages SET conversation_turn_id=? WHERE chat_id=? "
+                    f"AND telegram_message_id IN ({placeholders}) AND conversation_turn_id IS NULL",
+                    (turn_id, chat_id, *telegram_message_ids),
+                )
+                self.conn.commit()
+                return turn_id
+            cursor = self.conn.execute(
+                "INSERT INTO conversation_turns(user_id,chat_id,merged_text) VALUES(?,?,?)",
+                (user_id, chat_id, merged_text),
+            )
+            turn_id = cursor.lastrowid
+            self.conn.execute(
+                f"UPDATE messages SET conversation_turn_id=? WHERE chat_id=? "
+                f"AND telegram_message_id IN ({placeholders}) AND conversation_turn_id IS NULL",
+                (turn_id, chat_id, *telegram_message_ids),
+            )
+            self.conn.commit()
+            return turn_id
+
+        return await self._run(run)
+
+    async def recent_messages(self, chat_id: int, limit: int = 24, recent_media_hours: int = 24,
+                              exclude_turn_id: int | None = None):
         """Return only one Telegram chat's conversational history.
 
         A user can talk to the bot in a private chat and in groups.  Those are
         separate conversations even when they share the same Telegram user ID.
         """
-        rows = await self.fetchall("SELECT m.sender,m.text,m.type,m.timestamp,ss.visual_description AS sticker_visual,ss.meanings_json AS sticker_meanings,CASE WHEN m.timestamp >= datetime('now', ?) THEN md.description END AS photo_description FROM messages m LEFT JOIN stickers s ON s.file_id=m.sticker_file_id LEFT JOIN sticker_semantics ss ON ss.sticker_id=s.id LEFT JOIN message_media mm ON mm.chat_id=m.chat_id AND mm.telegram_message_id=m.telegram_message_id LEFT JOIN media_descriptions md ON md.media_id=mm.media_id WHERE m.chat_id=? ORDER BY m.id DESC LIMIT ?", (f"-{recent_media_hours} hours", chat_id, limit))
+        excluded = " AND (m.conversation_turn_id IS NULL OR m.conversation_turn_id != ?)" if exclude_turn_id is not None else ""
+        values = ((f"-{recent_media_hours} hours", chat_id, exclude_turn_id, limit)
+                  if exclude_turn_id is not None else (f"-{recent_media_hours} hours", chat_id, limit))
+        rows = await self.fetchall("SELECT m.sender,m.text,m.type,m.timestamp,ss.visual_description AS sticker_visual,ss.meanings_json AS sticker_meanings,CASE WHEN m.timestamp >= datetime('now', ?) THEN md.description END AS photo_description FROM messages m LEFT JOIN stickers s ON s.file_id=m.sticker_file_id LEFT JOIN sticker_semantics ss ON ss.sticker_id=s.id LEFT JOIN message_media mm ON mm.chat_id=m.chat_id AND mm.telegram_message_id=m.telegram_message_id LEFT JOIN media_descriptions md ON md.media_id=mm.media_id WHERE m.chat_id=?" + excluded + " ORDER BY m.id DESC LIMIT ?", values)
         return list(reversed(rows))
 
     async def record_reaction(self, *, chat_id: int, telegram_message_id: int, actor: str, emoji: str, actor_user_id: int | None = None, active: bool = True):
@@ -523,12 +567,39 @@ class Database:
         rows = await self.fetchall("SELECT telegram_message_id FROM messages WHERE chat_id=? AND sender='user' AND id>? ORDER BY id", (chat_id, row["last_bot_id"] or 0))
         return user_id, text, [row["telegram_message_id"] for row in rows]
 
+    async def turn_id_for_messages(self, chat_id: int, message_ids: list[int]) -> int | None:
+        if not message_ids:
+            return None
+        placeholders = ",".join("?" for _ in message_ids)
+        row = await self.fetchone(
+            f"SELECT conversation_turn_id FROM messages WHERE chat_id=? "
+            f"AND telegram_message_id IN ({placeholders}) AND conversation_turn_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1",
+            (chat_id, *message_ids),
+        )
+        return row["conversation_turn_id"] if row else None
+
     async def unread_user_messages_up_to(self, chat_id: int, boundary_message_id: int):
         return await self.fetchall(
             "SELECT id,telegram_message_id,user_id,type,text,sticker_file_id FROM messages "
             "WHERE chat_id=? AND sender='user' AND internally_read_at IS NULL AND telegram_message_id<=? ORDER BY id",
             (chat_id, boundary_message_id),
         )
+
+    async def read_batch_for_boundary(self, chat_id: int, boundary_message_id: int):
+        """Recover an already-created batch on retry, otherwise load unread rows."""
+        boundary = await self.fetchone(
+            "SELECT conversation_turn_id FROM messages WHERE chat_id=? AND sender='user' "
+            "AND telegram_message_id=?",
+            (chat_id, boundary_message_id),
+        )
+        if boundary and boundary["conversation_turn_id"] is not None:
+            return await self.fetchall(
+                "SELECT id,telegram_message_id,user_id,type,text,sticker_file_id FROM messages "
+                "WHERE chat_id=? AND sender='user' AND conversation_turn_id=? ORDER BY id",
+                (chat_id, boundary["conversation_turn_id"]),
+            )
+        return await self.unread_user_messages_up_to(chat_id, boundary_message_id)
 
     async def mark_messages_read(self, chat_id: int, message_ids: list[int]) -> None:
         if not message_ids:

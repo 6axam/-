@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.7 — Core conversation reliability
+`unreleased` · 2026-10-05
+
+Fixed initiative open-loop telemetry, crash-safe read-batch recovery, action-queue exception isolation and duplicate current-turn context.
+
 ## v1.22.6 — Reference-driven image identity
 `unreleased` · 2026-10-05
 

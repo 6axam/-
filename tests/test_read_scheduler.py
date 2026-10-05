@@ -214,6 +214,52 @@ async def test_processing_read_recovers_after_restart_and_executes_once(tmp_path
     await db.close()
 
 
+async def test_failed_dispatch_recovers_same_durable_batch_without_duplicate_turn(tmp_path):
+    db, scheduler = await make_scheduler(tmp_path)
+    await add_message(db, 10, 1, "first")
+    await add_message(db, 10, 2, "second")
+    read_id = await scheduler.schedule(1, 10, 2)
+    await db.execute("UPDATE scheduled_reads SET read_after=datetime('now','-1 second') WHERE id=?", (read_id,))
+    attempts, replies, turn_ids = 0, [], []
+
+    async def dispatch(record):
+        nonlocal attempts
+        attempts += 1
+        rows = await db.read_batch_for_boundary(record["chat_id"], record["boundary_message_id"])
+        message_ids = [row["telegram_message_id"] for row in rows]
+        turn_id = await db.ensure_turn_for_batch(
+            user_id=1, chat_id=10, merged_text="\n".join(row["text"] for row in rows),
+            telegram_message_ids=message_ids,
+        )
+        turn_ids.append(turn_id)
+        if attempts == 1:
+            raise RuntimeError("crash after durable turn claim")
+        replies.append(tuple(message_ids))
+        await db.mark_messages_read(10, message_ids)
+
+    scheduler.bind(dispatch)
+    await scheduler.process_due()
+    assert (await db.fetchone("SELECT status FROM scheduled_reads WHERE id=?", (read_id,)))["status"] == "processing"
+    assert (await db.fetchone("SELECT COUNT(*) AS n FROM messages WHERE internally_read_at IS NULL"))["n"] == 2
+    await db.close()
+
+    db = Database(f"sqlite:///{tmp_path / 'reads.sqlite'}")
+    await db.connect()
+    scheduler = ReadScheduler(db, Presence(free_state()), ReadTimingEngine(settings(), rng=lambda low, _high: low))
+    scheduler.bind(dispatch)
+    await scheduler.recover_after_restart()
+    await scheduler.process_due()
+    await scheduler.process_due()
+
+    assert attempts == 2
+    assert replies == [(1, 2)]
+    assert turn_ids[0] == turn_ids[1]
+    assert (await db.fetchone("SELECT COUNT(*) AS n FROM conversation_turns"))["n"] == 1
+    assert (await db.fetchone("SELECT status FROM scheduled_reads WHERE id=?", (read_id,)))["status"] == "completed"
+    assert (await db.fetchone("SELECT COUNT(*) AS n FROM messages WHERE internally_read_at IS NULL"))["n"] == 0
+    await db.close()
+
+
 async def test_new_arrival_during_read_claim_cannot_start_old_generation():
     class BlockingScheduler:
         def __init__(self):

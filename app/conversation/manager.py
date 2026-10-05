@@ -1,4 +1,4 @@
-import asyncio, logging, uuid
+import asyncio, inspect, logging, uuid
 from app.actions.models import Action, ActionType
 from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTiming
 
@@ -30,6 +30,12 @@ class ConversationManager:
         # before each individual outgoing message.
         self.typing_sessions: dict[int, tuple[str, object]] = {}
         if scheduler: scheduler.bind(self)
+
+    @staticmethod
+    def _accepts_keyword(callable_, name: str) -> bool:
+        parameters = inspect.signature(callable_).parameters.values()
+        return any(parameter.name == name or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                   for parameter in parameters)
 
     async def _start_generation_typing(self, chat_id: int, generation: str) -> None:
         current = self.typing_sessions.get(chat_id)
@@ -131,7 +137,10 @@ class ConversationManager:
             if daily_state and not self.presence.allows_delayed_reply(daily_state):
                 log.info("timing_decision_skipped_free_period chat_id=%s phase=%s", chat_id, daily_state["phase"])
                 return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
-            system, context = await self.context.build(user_id, chat_id, text)
+            context_kwargs = ({"current_turn_id": turn_id}
+                              if turn_id is not None and self._accepts_keyword(self.context.build, "current_turn_id")
+                              else {})
+            system, context = await self.context.build(user_id, chat_id, text, **context_kwargs)
             event = daily_state.get("event") if daily_state else None
             timing_signal = (
                 "TIMING DAILY STATE\n"
@@ -176,6 +185,8 @@ class ConversationManager:
         build_with_breakdown = getattr(self.context, "build_with_breakdown", None)
         if build_with_breakdown:
             context_kwargs = {"delay_event": delay_event} if delay_event is not None else {}
+            if turn_id is not None and self._accepts_keyword(build_with_breakdown, "current_turn_id"):
+                context_kwargs["current_turn_id"] = turn_id
             if self.self_life:
                 context_kwargs.update(self_life_gate_open=self_life_gate_open, life_state=life_state)
             if bedtime_state:
@@ -337,5 +348,9 @@ class ConversationManager:
                 "SELECT id,title,availability,mentionable FROM daily_events WHERE id=? AND chat_id=?",
                 (delay_event_id, record["chat_id"]),
             )
-        await self._generate(user_id, record["chat_id"], text, generation, user_content=images, delay_event=delay_event)
+        turn_id = await self.context.db.turn_id_for_messages(record["chat_id"], message_ids)
+        await self._generate(
+            user_id, record["chat_id"], text, generation, turn_id=turn_id,
+            user_content=images, delay_event=delay_event,
+        )
         await self.scheduler.complete(record["id"])

@@ -116,3 +116,24 @@ async def test_initiative_context_retrieves_global_anya_life_events(tmp_path):
     assert "переделывала макет" in context
     assert telemetry["retrieved_life_event_ids"]
     await db.close()
+
+
+async def test_initiative_open_loop_ids_come_from_included_rows(tmp_path):
+    class Episodes:
+        async def open_loops(self, _chat_id, _query, _limit):
+            return [
+                {"id": 12, "confidence": .87, "summary": "дождаться результата"},
+                {"id": 99, "confidence": .55, "summary": "X" * 5000},
+            ]
+
+    db, _personality, _emotions, lifecycle, builder = await make_runtime(tmp_path)
+    builder.conversation_context.episodic_memory = Episodes()
+    await add_message(db, 10, 1, "напомни потом")
+    await lifecycle.on_user_message(10)
+
+    _system, context, telemetry = await builder.build(1, 10)
+
+    assert "[id=12 | confidence=0.87]" in context
+    assert "id=99" not in context
+    assert telemetry["retrieved_episode_ids"] == [12]
+    await db.close()

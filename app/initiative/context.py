@@ -81,11 +81,16 @@ class InitiativeContextBuilder:
         retrieved_episode_ids = []
         if getattr(cc, "episodic_memory", None):
             loops = await cc.episodic_memory.open_loops(chat_id, f"{lifecycle['followup_reason'] or ''} {history}", self.open_loop_max_items)
-            lines = self._bounded([f"[id={row['id']} | confidence={row['confidence']:.2f}] {row['summary']}" for row in loops], self.open_loop_token_budget)
+            included = []
+            for row in loops:
+                line = f"[id={row['id']} | confidence={row['confidence']:.2f}] {row['summary']}"
+                if estimate_tokens("\n".join([*(item[1] for item in included), line])) <= self.open_loop_token_budget:
+                    included.append((row["id"], line))
+            lines = [line for _episode_id, line in included]
             if lines:
                 block = "OPEN LOOPS\n" + "\n".join(lines) + "\nOptional callbacks, not obligations. Use one only when natural; do not mention ids or force an old topic."
                 blocks.append(block); components["episodic_open_loops"] = component_size(block)
-                retrieved_episode_ids = [int(line.split("]", 1)[0][4:]) for line in lines]
+                retrieved_episode_ids = [episode_id for episode_id, _line in included]
         if getattr(cc, "self_life", None):
             events = await cc.self_life.relevant(f"{lifecycle['followup_reason'] or ''} {history}", local.date().isoformat(), 6)
             lines = self._bounded([f"[id={r['id']}] {r['local_day'] or 'recent'}: {r['summary']}" for r in events[:6]], self.life_token_budget)

@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from collections import defaultdict
 from app.actions.models import Action, ActionType, Duration, QueuedAction
+
+log = logging.getLogger(__name__)
 
 
 class ActionQueue:
@@ -41,13 +44,20 @@ class ActionQueue:
         queue = self._queues[chat_id]
         while not queue.empty():
             item = await queue.get()
-            if item.generation_id not in self._cancelled or not item.action.cancelable:
-                task = asyncio.create_task(self.executor.execute(item))
-                self._active[chat_id] = (item.generation_id, task, item.action.cancelable)
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    self._active.pop(chat_id, None)
-            queue.task_done()
+            try:
+                if item.generation_id not in self._cancelled or not item.action.cancelable:
+                    task = asyncio.create_task(self.executor.execute(item))
+                    self._active[chat_id] = (item.generation_id, task, item.action.cancelable)
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        log.exception(
+                            "action_execution_failed chat_id=%s generation=%s action_type=%s",
+                            chat_id, item.generation_id, item.action.type.value,
+                        )
+                    finally:
+                        self._active.pop(chat_id, None)
+            finally:
+                queue.task_done()

@@ -123,6 +123,8 @@ git diff --check
 | 2026-10-03 | `./.venv/bin/python -m pytest -q` | 244 passed | 9.85 s | — | Full suite after decoupling image prompts from fixed physical traits. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_image_generation.py tests/test_openrouter_images.py tests/test_context_budget.py` | 20 passed | 4.51 s | — | Pre-push verification of reference identity, situation-driven prompts, provider payload and context budget. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 244 passed | 9.99 s | — | Pre-push full suite for reference-driven image identity. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_initiative_context.py tests/test_actions.py tests/test_read_scheduler.py tests/test_context_budget.py tests/test_delayed_cancellation.py` | 36 passed | 1.44 s | — | Phase 1 open-loop telemetry, durable read recovery, queue resilience and current-turn context boundaries. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q` | 250 passed | 9.97 s | — | Full suite after core conversation reliability fixes. |
 
 ## Maintenance rule
 

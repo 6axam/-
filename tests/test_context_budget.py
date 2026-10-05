@@ -8,6 +8,7 @@ from app.database.db import Database
 from app.emotions.affective import AffectiveEngine
 from app.emotions.relationship import RelationshipBondManager
 from app.llm.schemas import LLMResponse
+from app.llm.openai_provider import OpenAICompatibleProvider
 
 
 async def make_db(tmp_path):
@@ -105,6 +106,87 @@ async def test_primary_request_keeps_current_turn_and_attaches_numeric_breakdown
     assert telemetry["components"]["character_prompt"]["tokens"] > 0
     assert all(set(size) == {"chars", "tokens"} for size in telemetry["components"].values())
     assert "CURRENT_TURN_MUST_STAY" not in str(telemetry)
+    await db.close()
+
+
+async def test_current_logical_turn_is_present_once_and_identical_history_remains(tmp_path):
+    class Provider:
+        def __init__(self): self.request = None
+        async def generate(self, request): self.request = request; return LLMResponse()
+
+    db = await make_db(tmp_path)
+    marker = "IDENTICAL_USER_TEXT"
+    await message(db, 10, 1, marker)
+    await db.create_turn(user_id=1, chat_id=10, merged_text=marker, telegram_message_ids=[1])
+    await db.record_message(chat_id=10, telegram_message_id=2, sender="assistant", kind="text", text="previous answer")
+    await message(db, 10, 3, marker)
+    current_turn_id = await db.create_turn(user_id=1, chat_id=10, merged_text=marker, telegram_message_ids=[3])
+    provider = Provider()
+    manager = ConversationManager(provider, ContextBuilder(db), ActionQueue(SimpleNamespace(execute=lambda _: None)))
+
+    await manager.handle_turn(1, 10, marker, turn_id=current_turn_id)
+
+    final_content = OpenAICompatibleProvider("key", "model")._user_content(provider.request)
+    assert final_content.count(marker) == 2
+    assert provider.request.context.count(marker) == 1
+    assert provider.request.user_turn == marker
+    assert provider.request.telemetry["history_messages"] == 2
+    await db.close()
+
+
+async def test_all_messages_in_current_burst_are_excluded_from_history(tmp_path):
+    db = await make_db(tmp_path)
+    await message(db, 10, 1, "OLDER_HISTORY")
+    await db.create_turn(user_id=1, chat_id=10, merged_text="OLDER_HISTORY", telegram_message_ids=[1])
+    await message(db, 10, 2, "BURST_FIRST")
+    await message(db, 10, 3, "BURST_SECOND")
+    turn_id = await db.create_turn(
+        user_id=1, chat_id=10, merged_text="BURST_FIRST\nBURST_SECOND", telegram_message_ids=[2, 3],
+    )
+
+    _system, context, breakdown = await ContextBuilder(db).build_with_breakdown(
+        1, 10, "BURST_FIRST\nBURST_SECOND", current_turn_id=turn_id,
+    )
+
+    assert "OLDER_HISTORY" in context
+    assert "BURST_FIRST" not in context and "BURST_SECOND" not in context
+    assert breakdown["history_messages"] == 1
+    await db.close()
+
+
+async def test_delayed_response_excludes_its_durable_turn_from_history(tmp_path):
+    class Provider:
+        supports_vision = False
+        def __init__(self): self.request = None
+        async def generate(self, request): self.request = request; return LLMResponse()
+
+    class Scheduler:
+        def __init__(self): self.completed = []
+        def bind(self, _manager): pass
+        async def is_current(self, _record): return True
+        async def complete(self, record_id): self.completed.append(record_id)
+
+    db = await make_db(tmp_path)
+    await message(db, 10, 1, "DELAYED_HISTORY")
+    await db.create_turn(user_id=1, chat_id=10, merged_text="DELAYED_HISTORY", telegram_message_ids=[1])
+    await db.record_message(chat_id=10, telegram_message_id=2, sender="assistant", kind="text", text="old response")
+    await message(db, 10, 3, "DELAYED_FIRST")
+    await message(db, 10, 4, "DELAYED_SECOND")
+    await db.create_turn(
+        user_id=1, chat_id=10, merged_text="DELAYED_FIRST\nDELAYED_SECOND", telegram_message_ids=[3, 4],
+    )
+    provider, scheduler = Provider(), Scheduler()
+    manager = ConversationManager(
+        provider, ContextBuilder(db), ActionQueue(SimpleNamespace(execute=lambda _: None)), scheduler=scheduler,
+    )
+
+    await manager.handle_scheduled({"id": 7, "chat_id": 10, "generation_id": "delayed", "delay_event_id": None})
+
+    assert "DELAYED_HISTORY" in provider.request.context
+    assert "DELAYED_FIRST" not in provider.request.context
+    assert "DELAYED_SECOND" not in provider.request.context
+    assert provider.request.user_turn == "DELAYED_FIRST\nDELAYED_SECOND"
+    assert scheduler.completed == [7]
     await db.close()
 
 

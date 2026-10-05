@@ -130,13 +130,10 @@ async def main():
         if not await read_scheduler.is_current(record):
             return
         chat_id, boundary = record["chat_id"], record["boundary_message_id"]
-        rows = await db.unread_user_messages_up_to(chat_id, boundary)
+        rows = await db.read_batch_for_boundary(chat_id, boundary)
         if not rows:
             return
         message_ids = [row["telegram_message_id"] for row in rows]
-        # Store the boundary before conversation work. Later arrivals remain
-        # unread and will get their own job instead of leaking into this turn.
-        await db.mark_messages_read(chat_id, message_ids)
         if not await read_scheduler.is_current(record):
             return
         parts = []
@@ -155,13 +152,14 @@ async def main():
         if await db.has_unread_user_message_after(chat_id, boundary):
             logging.getLogger(__name__).info("read_batch_superseded chat_id=%s boundary_message_id=%s", chat_id, boundary)
             return
-        turn_id = await db.create_turn(
+        turn_id = await db.ensure_turn_for_batch(
             user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=message_ids,
         )
         images = await media.inputs_for_messages(chat_id, message_ids) if provider.supports_vision else []
         if not provider.supports_vision and any(row["type"] == "photo" for row in rows):
             logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
         await manager.handle_turn(user_id, chat_id, merged, turn_id, message_ids[-1], images)
+        await db.mark_messages_read(chat_id, message_ids)
 
     read_scheduler.bind(on_messages_read)
 

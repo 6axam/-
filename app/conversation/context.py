@@ -91,13 +91,19 @@ class ContextBuilder:
             return f"{row['sender']}: [фото: {row['photo_description']}]"
         return f"{row['sender']}: {row['text'] or '[' + row['type'] + ']'}"
 
-    async def build(self, user_id, chat_id, user_turn, delay_event=None):
-        system, context, _ = await self.build_with_breakdown(user_id, chat_id, user_turn, delay_event=delay_event)
+    async def build(self, user_id, chat_id, user_turn, delay_event=None, current_turn_id=None):
+        system, context, _ = await self.build_with_breakdown(
+            user_id, chat_id, user_turn, delay_event=delay_event, current_turn_id=current_turn_id,
+        )
         return system, context
 
     async def build_with_breakdown(self, user_id, chat_id, user_turn, delay_event=None,
-                                   self_life_gate_open: bool = False, life_state=None, bedtime_state=None):
-        messages = await self.db.recent_messages(chat_id, limit=self.recent_max_messages, recent_media_hours=self.recent_media_hours)
+                                   self_life_gate_open: bool = False, life_state=None, bedtime_state=None,
+                                   current_turn_id=None):
+        messages = await self.db.recent_messages(
+            chat_id, limit=self.recent_max_messages, recent_media_hours=self.recent_media_hours,
+            exclude_turn_id=current_turn_id,
+        )
         selected_history = self._select_history([self._render(row) for row in messages])
         history = "\n".join(selected_history)
 
