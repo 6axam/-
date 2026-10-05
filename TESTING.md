@@ -127,6 +127,8 @@ git diff --check
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 250 passed | 9.97 s | — | Full suite after core conversation reliability fixes. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_buffer.py tests/test_message_splitter.py tests/test_image_generation.py tests/test_openrouter_images.py tests/test_vision_semantic.py tests/test_lifecycle_initiative.py tests/test_actions.py` | 61 passed | 6.36 s | — | Phase 2 buffered sticker vision, reference-safe images, failure fallback, split metadata and media lifecycle. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 261 passed | 10.29 s | — | Full suite after media and action delivery fixes. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_episodic_memory.py tests/test_initiative_context.py tests/test_emotional_v3_tuning.py` | 18 passed | 0.79 s | — | Phase 3 real-day open-loop age units, monotonic decay and long-lived importance weighting. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q` | 263 passed | 9.99 s | — | Full suite after episodic open-loop age decay correction. |
 
 ## Maintenance rule
 

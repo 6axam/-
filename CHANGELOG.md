@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.9 — Episodic open-loop age units
+`unreleased` · 2026-10-05
+
+Corrected open-loop age to actual elapsed days while preserving the intended long-lived decay through an explicit per-day coefficient.
+
 ## v1.22.8 — Media delivery correctness
 `unreleased` · 2026-10-05
 

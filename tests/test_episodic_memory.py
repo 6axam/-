@@ -87,3 +87,35 @@ async def test_superseded_is_not_retrieved_and_chats_are_isolated(tmp_path):
  assert all(r['id'] != old for r in await m.relevant(1,'byteplus openrouter'))
  assert len(await m.relevant(2,'byteplus')) == 1
  await db.close()
+
+
+@pytest.mark.asyncio
+async def test_open_loop_age_is_real_days_and_decay_is_monotonic(tmp_path):
+ db=Database(f"sqlite:///{tmp_path/'age.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); s=EmotionalState()
+ ids=[]
+ for days in (1,30,90):
+  ident=await m.apply(1,MemoryEpisode(kind='open_loop',summary='проверить одинаковый результат',importance=.7,confidence=.8,unresolved=True),s)
+  await db.execute("UPDATE episodic_memories SET created_at=datetime('now', ?) WHERE id=?",(f'-{days} days',ident))
+  ids.append(ident)
+
+ rows=await m.open_loops(1,'проверить результат',limit=3)
+
+ assert [row['id'] for row in rows] == ids
+ by_id={row['id']:row['age_days'] for row in rows}
+ assert 0.99 <= by_id[ids[0]] <= 1.01
+ assert 29.99 <= by_id[ids[1]] <= 30.01
+ assert 89.99 <= by_id[ids[2]] <= 90.01
+ await db.close()
+
+
+@pytest.mark.asyncio
+async def test_important_old_open_loop_remains_competitive_by_explicit_weights(tmp_path):
+ db=Database(f"sqlite:///{tmp_path/'important-age.sqlite'}"); await db.connect(); m=EpisodicMemoryManager(db); s=EmotionalState()
+ recent=await m.apply(1,MemoryEpisode(kind='open_loop',summary='вернуться к проекту',importance=.35,confidence=.35,unresolved=True),s)
+ old=await m.apply(1,MemoryEpisode(kind='open_loop',summary='вернуться к проекту',importance=1,confidence=1,unresolved=True),s)
+ await db.execute("UPDATE episodic_memories SET created_at=datetime('now','-90 days') WHERE id=?",(old,))
+
+ rows=await m.open_loops(1,'вернуться к проекту',limit=2)
+
+ assert [row['id'] for row in rows] == [old,recent]
+ await db.close()
