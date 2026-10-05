@@ -16,9 +16,21 @@ class IncomingBuffer:
             await asyncio.sleep(self.delay)
             messages = self.items.pop(chat_id, [])
             self.tasks.pop(chat_id, None)
-            try: await self.callback(chat_id, messages)
-            finally: self._content.pop(chat_id, None)
+            await self.callback(chat_id, messages)
         except asyncio.CancelledError: pass
 
     def content_for(self, chat_id, message_id):
         return self._content.get(chat_id, {}).get(message_id, [])
+
+    def content_for_messages(self, chat_id, message_ids):
+        content = self._content.get(chat_id, {})
+        return {message_id: list(content.get(message_id, [])) for message_id in message_ids if content.get(message_id)}
+
+    def clear_content(self, chat_id, message_ids):
+        content = self._content.get(chat_id)
+        if not content:
+            return
+        for message_id in message_ids:
+            content.pop(message_id, None)
+        if not content:
+            self._content.pop(chat_id, None)

@@ -8,8 +8,43 @@ from app.telegram.text import strip_emoji
 
 class TelegramActionExecutor:
     typing_refresh_seconds = 4.0
+    image_failure_fallback = "блин, фотка не получилась"
 
-    def __init__(self, bot, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None, image_daily_limit=2, image_cooldown_hours=12, voice_provider=None): self.bot,self.db,self.stickers,self.lifecycle,self.image_provider,self.image_prompts,self.image_daily_limit,self.image_cooldown_hours,self.voice_provider,self.timing = bot,db,stickers,lifecycle,image_provider,image_prompts,image_daily_limit,image_cooldown_hours,voice_provider,TimingEngine()
+    def __init__(self, bot, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None, image_daily_limit=2, image_cooldown_hours=12, voice_provider=None):
+        self.bot,self.db,self.stickers,self.lifecycle,self.image_provider,self.image_prompts,self.image_daily_limit,self.image_cooldown_hours,self.voice_provider,self.timing = bot,db,stickers,lifecycle,image_provider,image_prompts,image_daily_limit,image_cooldown_hours,voice_provider,TimingEngine()
+        self._image_generations = {}
+
+    def register_generation(self, generation_id, actions):
+        image_count = sum(action.type == ActionType.image for action in actions)
+        if image_count:
+            self._image_generations[generation_id] = {
+                "remaining": image_count,
+                "has_text": any(action.type == ActionType.text and action.text for action in actions),
+                "notified": False,
+            }
+
+    async def _notify_image_failure(self, item):
+        state = self._image_generations.setdefault(
+            item.generation_id, {"remaining": 1, "has_text": False, "notified": False},
+        )
+        if state["has_text"] or state["notified"]:
+            return
+        state["notified"] = True
+        sent = await self.bot.send_message(item.chat_id, self.image_failure_fallback)
+        await self.db.record_message(
+            chat_id=item.chat_id, telegram_message_id=sent.message_id,
+            sender="assistant", kind="text", text=self.image_failure_fallback,
+        )
+        if self.lifecycle:
+            await self.lifecycle.on_bot_message(item.chat_id)
+
+    def _finish_image(self, generation_id):
+        state = self._image_generations.get(generation_id)
+        if not state:
+            return
+        state["remaining"] -= 1
+        if state["remaining"] <= 0:
+            self._image_generations.pop(generation_id, None)
 
     async def start_generation_typing(self, chat_id: int):
         """Show typing while an LLM request is in flight, refreshing it safely."""
@@ -57,10 +92,16 @@ class TelegramActionExecutor:
                 await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="sticker", sticker_file_id=file_id)
                 await self.stickers.db.execute("UPDATE stickers SET times_sent=times_sent+1 WHERE id=?", (sticker_id,))
                 await self.stickers.record_usage(sticker_id, item.chat_id, "outgoing")
+                if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
         elif a.type == ActionType.image and a.image_intent and self.image_provider:
             try:
-                if not self.image_prompts or not await self.image_prompts.allowed(item.chat_id, self.image_daily_limit, self.image_cooldown_hours): return
+                if not self.image_prompts:
+                    raise RuntimeError("image prompt builder is unavailable")
+                if not await self.image_prompts.allowed(item.chat_id, self.image_daily_limit, self.image_cooldown_hours):
+                    raise RuntimeError("image generation limit or cooldown is active")
                 prompt, visual, references = await self.image_prompts.build(item.chat_id, a.image_intent)
+                if references and not getattr(self.image_provider, "supports_references", False):
+                    raise RuntimeError("configured image provider does not support identity references")
                 kind = a.image_intent.kind.value
                 await self.db.execute("INSERT INTO image_generation_usage(chat_id,provider,prompt,status) VALUES(?,?,?,'processing')", (item.chat_id, self.image_provider.name, prompt))
                 generated = await self._generate_image_with_progress(prompt, references, item.chat_id, kind)
@@ -69,10 +110,14 @@ class TelegramActionExecutor:
                 await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="photo", text=a.image_intent.caption or "[generated image]")
                 await self.db.execute("UPDATE image_generation_usage SET status='sent',cost=? WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (generated.cost,item.chat_id))
                 await self.db.execute("INSERT INTO generated_images(chat_id,telegram_message_id,kind,scene,location,activity,clothing_context,provider,model,status) VALUES(?,?,?,?,?,?,?,?,?,?)", (item.chat_id,sent.message_id,kind,a.image_intent.scene,visual['location'],visual['activity'],visual['clothing'],self.image_provider.name,getattr(self.image_provider,'model',''),'sent'))
+                if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning("image_generation_failed chat_id=%s error=%s", item.chat_id, exc)
                 await self.db.execute("UPDATE image_generation_usage SET status='failed' WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (item.chat_id,))
+                await self._notify_image_failure(item)
+            finally:
+                self._finish_image(item.generation_id)
         elif a.type == ActionType.voice_message and a.voice_intent:
             import logging
             if not self.voice_provider or not getattr(self.voice_provider, "enabled", True):

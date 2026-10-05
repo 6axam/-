@@ -1,6 +1,7 @@
 import base64
 import httpx
-from app.images import OpenRouterImageProvider
+import pytest
+from app.images import OpenAIImageProvider, OpenRouterImageProvider
 
 async def test_openrouter_image_provider_uses_dedicated_images_endpoint():
     async def handler(request):
@@ -34,3 +35,14 @@ async def test_openrouter_reference_payload_is_typed_image_url():
     images.httpx.AsyncClient=Client
     try: await provider.generate("short",[b"reference"])
     finally: images.httpx.AsyncClient=original
+
+
+async def test_openai_compatible_provider_rejects_unsupported_references_before_http():
+    provider = OpenAIImageProvider("key", "model", "https://example.invalid/v1")
+    assert provider.supports_references is False
+    with pytest.raises(RuntimeError, match="does not support identity references"):
+        await provider.generate("selfie", [b"reference"])
+
+
+def test_openrouter_declares_reference_support():
+    assert OpenRouterImageProvider.supports_references is True

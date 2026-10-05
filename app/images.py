@@ -16,7 +16,7 @@ class GeneratedImage:
     cost: float | None = None
 
 class ImageGenerationProvider(ABC):
-    name="disabled"; model=""
+    name="disabled"; model=""; supports_references=False
     @abstractmethod
     async def generate(self, prompt: str, references: list[bytes] | None = None) -> GeneratedImage: ...
 
@@ -27,12 +27,14 @@ class OpenAIImageProvider(ImageGenerationProvider):
     name="openai_compatible"
     def __init__(self,key,model,base_url): self.api_key,self.model,self.base_url=key,model,base_url.rstrip("/")
     async def generate(self,prompt,references=None):
+        if references:
+            raise RuntimeError("openai-compatible image generation endpoint does not support identity references")
         async with httpx.AsyncClient(timeout=httpx.Timeout(90,connect=10)) as c:
             r=await c.post(self.base_url+"/images/generations",headers={"Authorization":f"Bearer {self.api_key}"},json={"model":self.model,"prompt":prompt,"n":1,"size":"1024x1024","response_format":"b64_json"})
         r.raise_for_status(); return GeneratedImage(base64.b64decode(r.json()["data"][0]["b64_json"]))
 
 class OpenRouterImageProvider(OpenAIImageProvider):
-    name="openrouter"
+    name="openrouter"; supports_references=True
     async def generate(self,prompt,references=None):
         # OpenRouter Image API requires the same typed image_url object for
         # every input reference; a bare `data_url` object is rejected with 400.
@@ -119,6 +121,13 @@ class ImagePromptBuilder:
     def __init__(self,db,timezone_name="Europe/Kyiv",reference_path="assets/anya/reference.jpg",debug=False,rng=None,weather=None):
         self.db,self.zone,self.reference_path,self.debug,self.rng,self.weather=db,ZoneInfo(timezone_name),Path(reference_path),debug,rng or random.Random(),weather
     async def build(self,chat_id,intent):
+        kind = intent.kind.value
+        if kind not in self.kinds:
+            raise ValueError(f"unsupported image intent kind: {kind}")
+        self_present=kind in {"front_selfie","mirror_selfie","casual_photo","outfit_photo"}
+        if self_present and not self.reference_path.is_file():
+            raise FileNotFoundError(f"canonical identity reference is missing: {self.reference_path}")
+        reference = self.reference_path.read_bytes() if self_present else None
         now=datetime.now(self.zone); college=now.weekday()<5 and 8<=now.hour<14
         weather = await self.weather.current() if self.weather else None
         location,activity,outfit_key=("college classroom","classes","college") if college else (("home bedroom","sleeping","sleep") if now.hour<8 else ("home bedroom","free time","home"))
@@ -141,12 +150,6 @@ class ImagePromptBuilder:
                 if weather.apparent_temperature_c <= 8: clothing += ", plus a warm dark coat or jacket"
                 elif weather.apparent_temperature_c <= 17: clothing += ", plus a dark jacket"
             await self.db.execute("INSERT INTO visual_state(chat_id,location,activity,clothing_context,period_key) VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET location=excluded.location,activity=excluded.activity,clothing_context=excluded.clothing_context,period_key=excluded.period_key,updated_at=CURRENT_TIMESTAMP",(chat_id,location,activity,clothing,key))
-        kind = intent.kind.value
-        if kind not in self.kinds:
-            # This is defensive: ImageIntent normally rejects unknown values
-            # before an action reaches the executor.
-            raise ValueError(f"unsupported image intent kind: {kind}")
-        self_present=kind in {"front_selfie","mirror_selfie","casual_photo","outfit_photo"}
         appearance=Path("prompts/appearance.md").read_text(encoding="utf-8").strip() if Path("prompts/appearance.md").exists() else ""
         if self_present and not appearance: raise ValueError("appearance.md must be filled for images containing Anya")
         variant=self.rng.choice(self.kinds[kind])
@@ -163,7 +166,7 @@ class ImagePromptBuilder:
         parts=["SITUATION\n"+intent.scene+"\nTreat this as the primary moment of the image. Adapt pose, crop and nearby environment to it, while keeping the persistent world state.","CURRENT VISUAL STATE\n"+f"{now:%Y-%m-%d %H:%M}, {location}; {activity}",weather_block,"LIGHTING\n"+light,"ENVIRONMENT\n"+env,"PHOTO TYPE\n"+variant,"POSE\n"+pose,"MICRO-ACTION\n"+micro_action,"CAMERA / FRAMING\n"+framing,"NATURAL POSE / REALISM\n"+self.natural_pose_rules,"PHOTO CHARACTER\n"+style,"AVOID\nprofessional photography, fashion shoot, cinematic lighting, studio composition, glamour retouching, beauty-ad aesthetic, unexplained third-person photographer, mannequin-like posing, extreme body twisting, awkward arm extension, impossible shoulder angles, forced leg placement, exaggerated wide-leg stance, awkward full-body selfie distortion, dramatic runway posing unless explicitly requested, floating limbs or unnatural hand anatomy"]
         if self_present: parts.insert(0,"REFERENCE IDENTITY\n"+appearance); parts.insert(2,"OUTFIT\n"+clothing)
         if custom: parts.append("USER VISUAL PREFERENCES\n"+custom+"\nApply these only when compatible with identity, current world state and the requested scene.")
-        prompt="\n\n".join(parts); refs=[self.reference_path.read_bytes()] if self_present and self.reference_path.is_file() else []
+        prompt="\n\n".join(parts); refs=[reference] if reference is not None else []
         if self.debug: log.info("image_prompt kind=%s state=%s type=%s pose=%s micro_action=%s framing=%s reference_used=%s\n%s",kind,{"location":location,"activity":activity,"clothing":clothing},variant,pose,micro_action,framing,bool(refs),prompt)
         return prompt,{"location":location,"activity":activity,"clothing":clothing,"kind":kind},refs
     async def allowed(self,chat_id,limit,cooldown):

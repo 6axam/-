@@ -16,6 +16,10 @@ class ActionQueue:
         self._active: dict[int, tuple[str, asyncio.Task, bool]] = {}
 
     async def enqueue_many(self, chat_id: int, generation_id: str, actions):
+        actions = list(actions)
+        register = getattr(self.executor, "register_generation", None)
+        if register:
+            register(generation_id, actions)
         previous = None
         for action in actions:
             # Consecutive text actions are independent Telegram messages. Add a

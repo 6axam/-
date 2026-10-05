@@ -134,12 +134,15 @@ async def main():
         if not rows:
             return
         message_ids = [row["telegram_message_id"] for row in rows]
+        buffered_content = buffer.content_for_messages(chat_id, message_ids)
         if not await read_scheduler.is_current(record):
             return
         parts = []
+        sticker_semantics = {}
         for row in rows:
             if row["type"] == "sticker":
                 semantic = await stickers.semantic_for_file_id(row["sticker_file_id"])
+                sticker_semantics[row["telegram_message_id"]] = semantic
                 parts.append(semantic or "Максим отправил стикер.")
             elif row["type"] == "photo":
                 parts.append((row["text"] or "[Максим отправил изображение]").strip())
@@ -155,11 +158,17 @@ async def main():
         turn_id = await db.ensure_turn_for_batch(
             user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=message_ids,
         )
-        images = await media.inputs_for_messages(chat_id, message_ids) if provider.supports_vision else []
+        images = list(await media.inputs_for_messages(chat_id, message_ids)) if provider.supports_vision else []
+        if provider.supports_vision:
+            for row in rows:
+                message_id = row["telegram_message_id"]
+                if row["type"] == "sticker" and not sticker_semantics.get(message_id):
+                    images.extend(buffered_content.get(message_id, []))
         if not provider.supports_vision and any(row["type"] == "photo" for row in rows):
             logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
         await manager.handle_turn(user_id, chat_id, merged, turn_id, message_ids[-1], images)
         await db.mark_messages_read(chat_id, message_ids)
+        buffer.clear_content(chat_id, message_ids)
 
     read_scheduler.bind(on_messages_read)
 

@@ -37,3 +37,21 @@ def test_technical_content_is_never_split():
 def test_existing_multiple_llm_text_actions_stay_separate():
     actions = [Action(type=ActionType.text, text="первая"), Action(type=ActionType.text, text="вторая")]
     assert splitter().split_actions(actions) == actions
+
+
+def test_split_text_preserves_delivery_metadata_on_every_part():
+    original = Action(
+        type=ActionType.text,
+        text=("Эта длинная мысль должна остаться ответом на конкретное сообщение. "
+              "Хотя она разбивается на несколько отдельных пузырей."),
+        reply_to_message_id=42,
+        automatic=True,
+        cancelable=False,
+        priority=7,
+    )
+
+    parts = splitter().split_actions([original])
+
+    assert len(parts) > 1
+    assert all(part.reply_to_message_id == 42 for part in parts)
+    assert all(part.automatic is True and part.cancelable is False and part.priority == 7 for part in parts)

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from app.actions.models import Action, ActionType, StickerIntent
+from app.actions.models import Action, ActionType, QueuedAction, StickerIntent
 from app.actions.queue import ActionQueue
 from app.conversation.context import ContextBuilder
 from app.conversation.manager import ConversationManager
@@ -190,9 +190,29 @@ async def test_end_to_end_fake_sticker_intent_is_resolved_and_sent(tmp_path):
             self.sent.append((chat_id, file_id)); return SimpleNamespace(message_id=55)
     db = await make_db(tmp_path); manager = make_stickers(db); await manager.register_incoming(sticker("kiss-file", "kiss-u", set_name=None))
     row = await db.fetchone("SELECT id FROM stickers WHERE file_unique_id='kiss-u'"); await save(manager, row["id"], "cute cat sends kiss", ["affection", "kiss"])
-    bot = Bot(); queue = ActionQueue(TelegramActionExecutor(bot, db, stickers=manager))
+    class Lifecycle:
+        def __init__(self): self.calls=[]
+        async def on_bot_message(self, chat_id): self.calls.append(chat_id)
+    lifecycle=Lifecycle(); bot = Bot(); queue = ActionQueue(TelegramActionExecutor(bot, db, stickers=manager, lifecycle=lifecycle))
     await queue.enqueue_many(1, "generation", [Action(type=ActionType.sticker, sticker_intent=StickerIntent(meaning="kiss", emotion="affection"))])
     await asyncio.sleep(.02)
     assert bot.sent == [(1, "kiss-file")]
+    assert lifecycle.calls == [1]
     assert (await db.fetchone("SELECT type FROM messages WHERE sender='assistant'"))["type"] == "sticker"
+    await db.close()
+
+
+async def test_skipped_sticker_does_not_update_lifecycle(tmp_path):
+    class Stickers:
+        async def file_id(self, _sticker_id): return None
+    class Lifecycle:
+        def __init__(self): self.calls=[]
+        async def on_bot_message(self, chat_id): self.calls.append(chat_id)
+    db = await make_db(tmp_path); lifecycle=Lifecycle()
+    executor=TelegramActionExecutor(SimpleNamespace(), db, stickers=Stickers(), lifecycle=lifecycle)
+    await executor.execute(QueuedAction(
+        chat_id=1, generation_id="skipped",
+        action=Action(type=ActionType.sticker, sticker_id=1),
+    ))
+    assert lifecycle.calls == []
     await db.close()

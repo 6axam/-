@@ -125,6 +125,8 @@ git diff --check
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 244 passed | 9.99 s | — | Pre-push full suite for reference-driven image identity. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_initiative_context.py tests/test_actions.py tests/test_read_scheduler.py tests/test_context_budget.py tests/test_delayed_cancellation.py` | 36 passed | 1.44 s | — | Phase 1 open-loop telemetry, durable read recovery, queue resilience and current-turn context boundaries. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 250 passed | 9.97 s | — | Full suite after core conversation reliability fixes. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_buffer.py tests/test_message_splitter.py tests/test_image_generation.py tests/test_openrouter_images.py tests/test_vision_semantic.py tests/test_lifecycle_initiative.py tests/test_actions.py` | 61 passed | 6.36 s | — | Phase 2 buffered sticker vision, reference-safe images, failure fallback, split metadata and media lifecycle. |
+| 2026-10-05 | `./.venv/bin/python -m pytest -q` | 261 passed | 10.29 s | — | Full suite after media and action delivery fixes. |
 
 ## Maintenance rule
 

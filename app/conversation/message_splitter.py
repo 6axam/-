@@ -28,7 +28,13 @@ class MessageSplitter:
         result = []
         for action in actions:
             if action is target:
-                result.extend(Action(type=ActionType.text, text=part, cancelable=action.cancelable, priority=action.priority) for part in parts)
+                result.extend(Action(
+                    type=ActionType.text, text=part,
+                    reply_to_message_id=action.reply_to_message_id,
+                    automatic=action.automatic,
+                    cancelable=action.cancelable,
+                    priority=action.priority,
+                ) for part in parts)
             else:
                 result.append(action)
         return result

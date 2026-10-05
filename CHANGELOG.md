@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.22.8 — Media delivery correctness
+`unreleased` · 2026-10-05
+
+Preserved buffered sticker vision frames, enforced reference-capable identity generation, added image failure fallback, retained split-action metadata and closed media lifecycle gaps.
+
 ## v1.22.7 — Core conversation reliability
 `unreleased` · 2026-10-05
 
