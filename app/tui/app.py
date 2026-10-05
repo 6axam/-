@@ -13,6 +13,7 @@ from textual.events import Resize
 from textual.widgets import Footer, Static
 
 from app.tui import ANIMATION_FPS, POLL_INTERVAL_SECONDS
+from app.tui.rendering import StyledSpan, TerminalCapabilities, TerminalRenderer
 from app.tui.scenes import SceneDecision, render_scene, resolve_scene
 from app.tui.state import (
     AnyaSnapshot,
@@ -23,6 +24,7 @@ from app.tui.state import (
     top_emotions,
     transition_events,
 )
+from app.tui.theme import ColorMode, build_app_css
 
 
 class AnyaTamagotchiApp(App[None]):
@@ -39,62 +41,7 @@ class AnyaTamagotchiApp(App[None]):
         Binding("question_mark", "show_help", "помощь"),
         Binding("escape", "close_overlay", "закрыть", show=False),
     ]
-    CSS = """
-    Screen {
-        background: #101018;
-        color: #e8e4ef;
-        layout: vertical;
-    }
-    #title {
-        height: 3;
-        padding: 1 2;
-        text-style: bold;
-        color: #ffd1e6;
-        background: #211828;
-    }
-    #main { height: 1fr; }
-    #scene {
-        width: 2fr;
-        height: 100%;
-        padding: 1 2;
-        content-align: center middle;
-        border: round #7d5b89;
-    }
-    #status {
-        width: 1fr;
-        min-width: 30;
-        height: 100%;
-        padding: 1;
-        border: round #55445e;
-        overflow-y: auto;
-    }
-    #activity, #events {
-        height: auto;
-        min-height: 3;
-        padding: 0 2;
-        border: round #55445e;
-    }
-    #events { color: #bdb2c5; }
-    #overlay {
-        display: none;
-        layer: overlay;
-        width: 70%;
-        max-width: 80;
-        height: auto;
-        max-height: 80%;
-        align: center middle;
-        padding: 2;
-        border: heavy #d889b5;
-        background: #1b1520;
-        overflow-y: auto;
-    }
-    Screen.compact #status { display: none; }
-    Screen.compact #scene { width: 1fr; padding: 0 1; }
-    Screen.compact #title { height: 1; padding: 0 1; }
-    Screen.compact #activity { min-height: 2; padding: 0 1; }
-    Screen.compact #events { display: none; }
-    Footer { height: 1; background: #211828; }
-    """
+    CSS = build_app_css()
 
     def __init__(self, reader: ReadOnlyStateReader) -> None:
         super().__init__()
@@ -108,6 +55,7 @@ class AnyaTamagotchiApp(App[None]):
         self._overlay_kind: str | None = None
         self._observer_started = False
         self._startup_handle: asyncio.TimerHandle | None = None
+        self.renderer = TerminalRenderer(TerminalCapabilities(ColorMode.TRUECOLOR))
 
     def compose(self) -> ComposeResult:
         yield Static("Аня · подключение к сохранённому состоянию…", id="title")
@@ -121,6 +69,14 @@ class AnyaTamagotchiApp(App[None]):
 
     async def _ready(self) -> None:
         await super()._ready()
+        console = self.console
+        self.renderer = TerminalRenderer(
+            TerminalCapabilities.detect(
+                getattr(console, "color_system", None),
+                encoding=getattr(console, "encoding", "utf-8"),
+                no_color=bool(getattr(console, "no_color", False)),
+            )
+        )
         # _process_messages invokes its public ready callback immediately after
         # this hook; the delay lets its first layout settle before animation.
         self._startup_handle = asyncio.get_running_loop().call_later(1.5, self._start_if_running)
@@ -174,40 +130,74 @@ class AnyaTamagotchiApp(App[None]):
         required = ("#title", "#scene", "#status", "#activity", "#events")
         if snapshot is None or decision is None or not all(self.query(selector) for selector in required):
             return
-        unavailable = " · [red]DB временно недоступна[/red]" if not snapshot.source_available else ""
         process = {"reading": " · читает", "responding": " · готовит ответ"}.get(snapshot.processing, "")
-        self.query_one("#title", Static).update(
-            f"[bold]Аня[/bold]  {snapshot.presence.local_time} · {escape(decision.location)}{process}{unavailable}"
-        )
+        title_spans = [
+            StyledSpan("Аня", "accent", bold=True, reverse_in_mono=True),
+            StyledSpan(f"  {snapshot.presence.local_time} · ", "muted"),
+            StyledSpan(decision.location, "text", bold=True),
+            StyledSpan(process, "success"),
+        ]
+        if not snapshot.source_available:
+            title_spans.append(StyledSpan(" · DB временно недоступна", "danger", bold=True))
+        self.query_one("#title", Static).update(self.renderer.line(title_spans))
         self.query_one("#scene", Static).update(render_scene(snapshot, decision, self.frame, self.compact))
         top = top_emotions(snapshot.emotions)
-        emotions = "\n".join(f"{escape(name):<18} {value:4.0%}" for name, value in top) or "нет сохранённых данных"
-        status = (
-            f"[bold]СОСТОЯНИЕ[/bold]\n"
-            f"место      {escape(decision.location)}\n"
-            f"занятие    {escape(decision.activity)}\n"
-            f"доступность {escape(snapshot.presence.availability)}\n"
-            f"диалог     {escape(snapshot.lifecycle)}\n"
-            f"энергия    {meter(snapshot.regulators.get('energy'))}\n\n"
-            f"[bold]ЭМОЦИИ[/bold]\n{emotions}\n\n"
-            f"[bold]ОТНОШЕНИЯ[/bold]\n" + "\n".join(relationship_lines(snapshot.relationship))
+        status_rows: list[tuple[StyledSpan, ...]] = [
+            (StyledSpan("СОСТОЯНИЕ", "accent", bold=True, reverse_in_mono=True),),
+            (StyledSpan("место       ", "muted"), StyledSpan(decision.location, "text", bold=True)),
+            (StyledSpan("занятие     ", "muted"), StyledSpan(decision.activity, "text", bold=True)),
+            (StyledSpan("доступность ", "muted"), StyledSpan(snapshot.presence.availability, "success")),
+            (StyledSpan("диалог      ", "muted"), StyledSpan(snapshot.lifecycle, "text")),
+            (StyledSpan("энергия     ", "muted"), StyledSpan(meter(snapshot.regulators.get("energy")), "warm")),
+            (),
+            (StyledSpan("ЭМОЦИИ", "accent", bold=True, reverse_in_mono=True),),
+        ]
+        if top:
+            status_rows.extend(
+                (StyledSpan(f"{name:<18}", "muted"), StyledSpan(f"{value:4.0%}", "warm", bold=True))
+                for name, value in top
+            )
+        else:
+            status_rows.append((StyledSpan("нет сохранённых данных", "muted", dim=True),))
+        status_rows.extend(
+            [
+                (),
+                (StyledSpan("ОТНОШЕНИЯ", "accent", bold=True, reverse_in_mono=True),),
+                *((StyledSpan(line, "text"),) for line in relationship_lines(snapshot.relationship)),
+            ]
         )
-        self.query_one("#status", Static).update(status)
+        self.query_one("#status", Static).update(self.renderer.lines(status_rows))
         evidence = "визуальная idle-вариация" if decision.evidence == "visual idle variation" else decision.evidence
         if self.compact:
             energy = snapshot.regulators.get("energy")
             trust = snapshot.relationship.get("relational_trust")
             security = snapshot.relationship.get("relationship_security")
             compact_value = lambda value: "n/a" if value is None else f"{value:.0%}"
-            activity = (
-                f"[bold]{escape(decision.activity)}[/bold] · энергия {compact_value(energy)}"
-                f" · trust {compact_value(trust)} · security {compact_value(security)}"
+            activity = self.renderer.line(
+                (
+                    StyledSpan(decision.activity, "accent", bold=True),
+                    StyledSpan(f" · энергия {compact_value(energy)}", "warm"),
+                    StyledSpan(f" · trust {compact_value(trust)} · security {compact_value(security)}", "muted"),
+                )
             )
         else:
-            activity = f"[bold]сейчас:[/bold] {escape(decision.activity)}  ·  источник: {escape(evidence)}"
+            activity = self.renderer.line(
+                (
+                    StyledSpan("сейчас: ", "accent", bold=True),
+                    StyledSpan(decision.activity, "text", bold=True),
+                    StyledSpan(f"  ·  источник: {evidence}", "muted"),
+                )
+            )
         self.query_one("#activity", Static).update(activity)
-        event_text = "  •  ".join(escape(item) for item in self.events) or "—"
-        self.query_one("#events", Static).update(f"[bold]этот запуск:[/bold] {event_text}")
+        event_text = "  •  ".join(self.events) or "—"
+        self.query_one("#events", Static).update(
+            self.renderer.line(
+                (
+                    StyledSpan("этот запуск: ", "accent_soft", bold=True),
+                    StyledSpan(event_text, "muted"),
+                )
+            )
+        )
         if self._overlay_kind:
             self._update_overlay(self._overlay_kind)
 

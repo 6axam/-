@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.24.0 — TUI visual foundation
+`unreleased` · 2026-10-05
+
+Added a shared cozy color system and capability-aware Rich renderer with truecolor, 256-color, monochrome and non-Unicode fallbacks for the terminal UI.
+
 ## v1.23.0 — Read-only terminal tamagotchi
 `unreleased` · 2026-10-05
 
