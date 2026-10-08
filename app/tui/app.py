@@ -121,7 +121,7 @@ class AnyaTamagotchiApp(App[None]):
         self.frame += 1
         if self.snapshot and self.decision and self.query("#scene"):
             self.query_one("#scene", Static).update(
-                render_scene(self.snapshot, self.decision, self.frame, self.compact)
+                render_scene(self.snapshot, self.decision, self.frame, self.compact, self.renderer)
             )
 
     def _render_state(self) -> None:
@@ -140,7 +140,9 @@ class AnyaTamagotchiApp(App[None]):
         if not snapshot.source_available:
             title_spans.append(StyledSpan(" · DB временно недоступна", "danger", bold=True))
         self.query_one("#title", Static).update(self.renderer.line(title_spans))
-        self.query_one("#scene", Static).update(render_scene(snapshot, decision, self.frame, self.compact))
+        self.query_one("#scene", Static).update(
+            render_scene(snapshot, decision, self.frame, self.compact, self.renderer)
+        )
         top = top_emotions(snapshot.emotions)
         status_rows: list[tuple[StyledSpan, ...]] = [
             (StyledSpan("СОСТОЯНИЕ", "accent", bold=True, reverse_in_mono=True),),

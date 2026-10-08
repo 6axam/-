@@ -91,8 +91,8 @@ def build_app_css(palette: CozyPalette = COZY_PALETTE) -> str:
         layout: vertical;
     }}
     #title {{
-        height: 3;
-        padding: 1 2;
+        height: 1;
+        padding: 0 2;
         text-style: bold;
         color: {color('accent')};
         background: {color('panel_lifted')};
@@ -101,7 +101,7 @@ def build_app_css(palette: CozyPalette = COZY_PALETTE) -> str:
     #scene {{
         width: 2fr;
         height: 100%;
-        padding: 1 2;
+        padding: 0 1;
         content-align: center middle;
         border: round {color('border')};
         background: {color('panel')};

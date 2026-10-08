@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.25.0 — Colored TUI dioramas
+`unreleased` · 2026-10-08
+
+Replaced the plain ASCII scene cards with detailed colored room and outdoor dioramas, readable chibi poses, in-scene affective particles and compact terminal fallbacks.
+
 ## v1.24.0 — TUI visual foundation
 `unreleased` · 2026-10-05
 

@@ -28,7 +28,7 @@ git diff --check
 | Daily presence and timing | `test_time_availability.py`, `test_presence_replies.py` | sleep/wake state, college rhythm, events and response timing. |
 | Telegram actions | `test_actions.py`, `test_reactions.py`, `test_emoji_filter.py`, `test_message_splitter.py` | sequential delivery, reactions, emoji policy and human-like message splitting. |
 | Media, stickers and images | `test_vision_semantic.py`, `test_semantic_production.py`, `test_image_generation.py`, `test_openrouter_images.py` | offline media/sticker pipeline, semantic retrieval and image generation/provider payloads. |
-| Read-only terminal observer | `test_tui.py`, `test_tui_rendering.py` | Scene priority, emotion aggregation, relationship meters, compact layout, color capability fallbacks, missing state and SQLite write protection. |
+| Read-only terminal observer | `test_tui.py`, `test_tui_rendering.py`, `test_tui_scenes.py` | Scene priority, fixed-size dioramas, distinct palettes, in-scene particles, relationship meters, compact layout, color capability fallbacks, missing state and SQLite write protection. |
 
 ## Recent runs
 
@@ -134,6 +134,8 @@ git diff --check
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 277 passed | 7.30 s | — | Full suite after adding the separate Textual terminal tamagotchi observer. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q tests/test_tui.py tests/test_tui_rendering.py` | 28 passed | 0.43 s | — | Phase 1 semantic palette, Rich rendering and truecolor/ANSI-256/mono/non-Unicode fallbacks. |
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 291 passed | 11.01 s | — | Full suite after Phase 1 TUI visual foundation. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q tests/test_tui.py tests/test_tui_rendering.py tests/test_tui_scenes.py` | 40 passed | 0.48 s | — | Colored 42×14 dioramas, distinct scene palettes, chibi poses, affective particles and terminal fallbacks. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q` | 303 passed | 7.36 s | — | Full suite after colored TUI diorama scenes. |
 
 ## Maintenance rule
 

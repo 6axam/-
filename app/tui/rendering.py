@@ -8,7 +8,7 @@ from typing import Iterable, Sequence
 from rich.style import Style
 from rich.text import Text
 
-from app.tui.theme import COZY_PALETTE, ColorMode, CozyPalette, detect_color_mode
+from app.tui.theme import COZY_PALETTE, ColorMode, ColorValue, CozyPalette, detect_color_mode
 
 
 ASCII_FALLBACK = str.maketrans(
@@ -76,6 +76,23 @@ class TerminalRenderer:
             bold=bold,
             dim=dim,
             reverse=reverse_in_mono and mode is ColorMode.MONO,
+        )
+
+    def color_style(
+        self,
+        foreground: ColorValue | None = None,
+        background: ColorValue | None = None,
+        *,
+        bold: bool = False,
+        dim: bool = False,
+    ) -> Style:
+        """Style a scene cell with colors supplied by a scene-local palette."""
+        mode = self.capabilities.color_mode
+        return Style(
+            color=foreground.resolve(mode) if foreground else None,
+            bgcolor=background.resolve(mode) if background else None,
+            bold=bold,
+            dim=dim,
         )
 
     def sanitize(self, value: str) -> str:
