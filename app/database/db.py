@@ -439,6 +439,74 @@ MIGRATIONS = [
       UNIQUE(event_id,transition_kind)
     );
     """,
+    """
+    -- Delayed work is owned by the transport that created it.  A user-account
+    -- runtime must never claim a Bot API job from the same durable database.
+    ALTER TABLE scheduled_responses ADD COLUMN transport TEXT NOT NULL DEFAULT 'bot_api';
+    ALTER TABLE scheduled_reads ADD COLUMN transport TEXT NOT NULL DEFAULT 'bot_api';
+    CREATE INDEX IF NOT EXISTS idx_scheduled_responses_transport_due ON scheduled_responses(transport,status,respond_after);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reads_transport_due ON scheduled_reads(transport,status,read_after);
+    -- MTProto documents are reusable only through their own account session;
+    -- Bot API file IDs are intentionally never treated as Telethon files.
+    CREATE TABLE IF NOT EXISTS mtproto_sticker_documents (
+      sticker_id INTEGER PRIMARY KEY REFERENCES stickers(id) ON DELETE CASCADE,
+      document_id INTEGER NOT NULL,
+      access_hash INTEGER NOT NULL,
+      file_reference BLOB NOT NULL,
+      mime_type TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    -- Transport delivery state is separate from `messages`: a local message
+    -- row proves only local persistence, not that Telegram acknowledged a
+    -- read receipt or that another person read an outgoing message.
+    CREATE TABLE IF NOT EXISTS telegram_message_states (
+      id INTEGER PRIMARY KEY,
+      transport TEXT NOT NULL,
+      account_id INTEGER NOT NULL,
+      peer_type TEXT NOT NULL,
+      peer_id INTEGER NOT NULL,
+      message_id INTEGER NOT NULL,
+      direction TEXT NOT NULL CHECK(direction IN ('incoming','outgoing')),
+      local_chat_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      read_watermark INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(transport,account_id,peer_type,peer_id,message_id,direction)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_message_states_chat ON telegram_message_states(local_chat_id,direction,message_id);
+    CREATE INDEX IF NOT EXISTS idx_telegram_message_states_peer ON telegram_message_states(transport,account_id,peer_type,peer_id,direction,message_id);
+    CREATE TABLE IF NOT EXISTS telegram_message_state_events (
+      id INTEGER PRIMARY KEY,
+      state_id INTEGER NOT NULL REFERENCES telegram_message_states(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      read_watermark INTEGER NOT NULL DEFAULT -1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(state_id,status,source,read_watermark)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_message_state_events_state ON telegram_message_state_events(state_id,id);
+    """,
+    """
+    -- An external Telegram action is at-most-once per transport/generation
+    -- slot. It is claimed before a side effect so a process restart cannot
+    -- enqueue the same generated action into a fresh in-memory ActionQueue.
+    CREATE TABLE IF NOT EXISTS action_dispatches (
+      id INTEGER PRIMARY KEY,
+      transport TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      action_index INTEGER NOT NULL,
+      chat_id INTEGER NOT NULL,
+      action_type TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('claimed','completed','failed')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(transport,generation_id,action_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_dispatches_chat ON action_dispatches(transport,chat_id,created_at);
+    """,
 ]
 
 
@@ -531,6 +599,138 @@ class Database:
             (chat_id, telegram_message_id, user_id, sender, kind, text, sticker_file_id, reply_to),
         )
         return cursor.lastrowid if cursor.rowcount else None
+
+    async def record_telegram_message_state(
+        self, *, transport: str, account_id: int, peer_type: str, peer_id: int,
+        message_id: int, direction: str, local_chat_id: int, status: str,
+        source: str, read_watermark: int | None = None,
+    ) -> int:
+        """Persist a truthful transport state plus its compact transition log.
+
+        State and event rows intentionally carry only protocol identifiers and
+        status metadata, never message contents.  A unique identity includes
+        the account and peer so two Telegram accounts cannot collide on an
+        ordinary per-chat message ID.
+        """
+        def run():
+            self.conn.execute(
+                "INSERT INTO telegram_message_states(transport,account_id,peer_type,peer_id,message_id,direction,local_chat_id,status,read_watermark) "
+                "VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(transport,account_id,peer_type,peer_id,message_id,direction) DO UPDATE SET "
+                "local_chat_id=excluded.local_chat_id,status=excluded.status,read_watermark=COALESCE(excluded.read_watermark,telegram_message_states.read_watermark),updated_at=CURRENT_TIMESTAMP",
+                (transport, account_id, peer_type, peer_id, message_id, direction, local_chat_id, status, read_watermark),
+            )
+            row = self.conn.execute(
+                "SELECT id FROM telegram_message_states WHERE transport=? AND account_id=? AND peer_type=? AND peer_id=? AND message_id=? AND direction=?",
+                (transport, account_id, peer_type, peer_id, message_id, direction),
+            ).fetchone()
+            self.conn.execute(
+                "INSERT OR IGNORE INTO telegram_message_state_events(state_id,status,source,read_watermark) VALUES(?,?,?,?)",
+                (row["id"], status, source, read_watermark if read_watermark is not None else -1),
+            )
+            self.conn.commit()
+            return row["id"]
+        return await self._run(run)
+
+    async def claim_action_dispatch(
+        self, *, transport: str, generation_id: str, action_index: int,
+        chat_id: int, action_type: str,
+    ) -> bool:
+        """Durably claim a single external ActionQueue slot before execution."""
+        result = await self.execute(
+            "INSERT INTO action_dispatches(transport,generation_id,action_index,chat_id,action_type,status) "
+            "VALUES(?,?,?,?,?,'claimed') ON CONFLICT(transport,generation_id,action_index) DO NOTHING",
+            (transport, generation_id, action_index, chat_id, action_type),
+        )
+        return result.rowcount == 1
+
+    async def finish_action_dispatch(
+        self, *, transport: str, generation_id: str, action_index: int, success: bool,
+    ) -> None:
+        await self.execute(
+            "UPDATE action_dispatches SET status=?,updated_at=CURRENT_TIMESTAMP "
+            "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed'",
+            ("completed" if success else "failed", transport, generation_id, action_index),
+        )
+
+    async def transition_telegram_messages(
+        self, *, local_chat_id: int, message_ids: list[int], status: str,
+        source: str, read_watermark: int | None = None,
+    ) -> int:
+        """Move known incoming MTProto messages forward without content access."""
+        if not message_ids:
+            return 0
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = await self.fetchall(
+            f"SELECT id FROM telegram_message_states WHERE local_chat_id=? AND direction='incoming' AND message_id IN ({placeholders})",
+            (local_chat_id, *message_ids),
+        )
+        for row in rows:
+            await self.execute(
+                "UPDATE telegram_message_states SET status=?,read_watermark=COALESCE(?,read_watermark),updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (status, read_watermark, row["id"]),
+            )
+            await self.execute(
+                "INSERT OR IGNORE INTO telegram_message_state_events(state_id,status,source,read_watermark) VALUES(?,?,?,?)",
+                (row["id"], status, source, read_watermark if read_watermark is not None else -1),
+            )
+        return len(rows)
+
+    async def transition_telegram_turn(
+        self, *, local_chat_id: int, turn_id: int | None, status: str, source: str,
+    ) -> int:
+        if turn_id is None:
+            return 0
+        rows = await self.fetchall(
+            "SELECT telegram_message_id FROM messages WHERE chat_id=? AND sender='user' AND conversation_turn_id=?",
+            (local_chat_id, turn_id),
+        )
+        return await self.transition_telegram_messages(
+            local_chat_id=local_chat_id, message_ids=[row["telegram_message_id"] for row in rows],
+            status=status, source=source,
+        )
+
+    async def confirm_mtproto_inbox_watermark(
+        self, *, account_id: int, peer_id: int, max_message_id: int, source: str,
+    ) -> int:
+        """Record Telegram's own inbox watermark without regressing later state."""
+        rows = await self.fetchall(
+            "SELECT id,status FROM telegram_message_states WHERE transport='mtproto' AND account_id=? "
+            "AND peer_type='user' AND peer_id=? AND direction='incoming' AND message_id<=?",
+            (account_id, peer_id, max_message_id),
+        )
+        forward = {"received", "scheduled_read", "read_ack_requested"}
+        for row in rows:
+            next_status = "read_ack_confirmed" if row["status"] in forward else row["status"]
+            await self.execute(
+                "UPDATE telegram_message_states SET status=?,read_watermark=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (next_status, max_message_id, row["id"]),
+            )
+            await self.execute(
+                "INSERT OR IGNORE INTO telegram_message_state_events(state_id,status,source,read_watermark) VALUES(?,?,?,?)",
+                (row["id"], "read_ack_confirmed", source, max_message_id),
+            )
+        return len(rows)
+
+    async def record_mtproto_outbox_read_watermark(
+        self, *, account_id: int, peer_id: int, max_message_id: int, source: str,
+    ) -> int:
+        """Store recipient-read watermark separately; it is not a local tick."""
+        rows = await self.fetchall(
+            "SELECT id FROM telegram_message_states WHERE transport='mtproto' AND account_id=? "
+            "AND peer_type='user' AND peer_id=? AND direction='outgoing' AND message_id<=?",
+            (account_id, peer_id, max_message_id),
+        )
+        for row in rows:
+            await self.execute(
+                "UPDATE telegram_message_states SET read_watermark=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (max_message_id, row["id"]),
+            )
+            await self.execute(
+                "INSERT OR IGNORE INTO telegram_message_state_events(state_id,status,source,read_watermark) VALUES(?,?,?,?)",
+                (row["id"], "recipient_read", source, max_message_id),
+            )
+        return len(rows)
 
     async def create_turn(self, *, user_id: int, chat_id: int, merged_text: str, telegram_message_ids: list[int]) -> int:
         cursor = await self.execute("INSERT INTO conversation_turns(user_id,chat_id,merged_text) VALUES(?,?,?)", (user_id, chat_id, merged_text))

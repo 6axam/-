@@ -35,7 +35,7 @@ async def test_reaction_state_and_context_signal(tmp_path):
     assert [row["emoji"] for row in signals] == ["❤️"]
 
     _system, context = await ContextBuilder(db).build(7, 10, "дальше")
-    assert "Максим поставил ❤️" in context
+    assert "Собеседник поставил ❤️" in context
     assert "Не отвечай на него отдельно" in context
 
     await db.record_reaction(chat_id=10, telegram_message_id=22, actor="user", actor_user_id=7, emoji="❤️", active=False)

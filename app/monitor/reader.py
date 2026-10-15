@@ -60,6 +60,13 @@ class MonitorReader:
         observation = self._one(conn, "SELECT * FROM turn_state_observations WHERE chat_id=? ORDER BY id DESC LIMIT 1", (self.chat_id,))
         observations = self._all(conn, "SELECT * FROM turn_state_observations WHERE chat_id=? ORDER BY id DESC LIMIT 20", (self.chat_id,))
         events = self._all(conn, "SELECT title,availability,starts_at,ends_at FROM daily_events WHERE chat_id=? ORDER BY starts_at DESC LIMIT 12", (self.chat_id,))
+        telegram = self._all(
+            conn,
+            "SELECT s.direction,s.message_id,s.status,s.read_watermark,s.updated_at,e.status AS event_status,e.source,e.created_at "
+            "FROM telegram_message_states s LEFT JOIN telegram_message_state_events e ON e.state_id=s.id "
+            "WHERE s.local_chat_id=? ORDER BY s.id DESC,e.id DESC LIMIT 80",
+            (self.chat_id,),
+        )
         episodes = self._one(conn, "SELECT COUNT(*) active,COALESCE(SUM(unresolved),0) unresolved FROM episodic_memories WHERE chat_id=? AND status='active'", (self.chat_id,))
         relationship = {key: float(bond[key]) for key in ("bond_strength","relational_trust","familiarity","care_investment","rupture_load","relationship_security","love_strength") if bond and key in bond.keys()}
         return {
@@ -69,6 +76,7 @@ class MonitorReader:
             "last_generation": dict(last_generation) if last_generation else {}, "generations": [dict(row) for row in generations],
             "observation": self._observation(observation), "observations": [self._observation(row) for row in observations],
             "events": [dict(row) for row in events], "episodes": dict(episodes) if episodes else {"active": 0, "unresolved": 0},
+            "telegram": [dict(row) for row in telegram],
         }
 
     @staticmethod

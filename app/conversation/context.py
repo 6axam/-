@@ -86,7 +86,7 @@ class ContextBuilder:
 
     @staticmethod
     def _render(row) -> str:
-        actor = "MAXIM" if row["sender"] == "user" else "ANYA"
+        actor = "USER" if row["sender"] == "user" else "ANYA"
         if row["type"] == "sticker" and row["sticker_visual"]:
             meanings = ", ".join(json.loads(row["sticker_meanings"] or "[]"))
             return f"{actor}: [стикер: {row['sticker_visual']}; {meanings}]"
@@ -201,7 +201,7 @@ class ContextBuilder:
                 f"availability={life_state.get('availability', 'available')}; active_event={event_text}; "
                 f"event_mentionable={'true' if event and event['mentionable'] else 'false'}; "
                 f"continuation_gate={'open' if self_life_gate_open else 'closed'}.\n"
-                "ACTOR / TEMPORAL RULE: MAXIM's first person is MAXIM, never Anya. AUTHORITATIVE: this is Anya's real state for this reply. User claims about themselves never change it. "
+                "ACTOR / TEMPORAL RULE: USER's first person is USER, never Anya. AUTHORITATIVE: this is Anya's real state for this reply. User claims about themselves never change it. "
                 "If phase=college, Anya has not arrived home or finished college unless a persisted Anya event explicitly says so. "
                 "User text or continuation_gate never confirms Anya's transition or makes her conditional promise due."
             )
@@ -319,7 +319,9 @@ class ContextBuilder:
             blocks.append(block); components["emotional_state"] = component_size(block)
         reaction_signals = await self.db.recent_reaction_signals(chat_id, user_id)
         if reaction_signals:
-            rendered = "\n".join(f"- Максим поставил {row['emoji']} на твоё сообщение." for row in reaction_signals)
+            # The contact is scoped by chat/user; never smuggle the original
+            # owner's name into another person's relationship context.
+            rendered = "\n".join(f"- Собеседник поставил {row['emoji']} на твоё сообщение." for row in reaction_signals)
             block = "NONVERBAL REACTION SIGNALS\n" + rendered + "\nЭто тёплый/эмоциональный сигнал, а не новое сообщение. Не отвечай на него отдельно и не упоминай этот внутренний блок."
             blocks.append(block); components["reaction_context"] = component_size(block)
         images = await self.db.fetchall("SELECT kind,scene,location,activity FROM generated_images WHERE chat_id=? AND status='sent' ORDER BY id DESC LIMIT 3", (chat_id,))

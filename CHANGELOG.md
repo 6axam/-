@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.27.0 — MTProto delivery reliability
+`unreleased` · 2026-10-15
+
+Added truthful MTProto read-watermark tracking, a read-only Telegram delivery
+monitor, transport-isolated durable scheduling, and at-most-once ActionQueue
+claims that prevent repeated sends after a restart.
+
 ## v1.26.0 — Shared mind, MTProto test runtime and visual tooling
 `unreleased` · 2026-10-15
 

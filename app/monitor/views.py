@@ -125,7 +125,7 @@ def prompt(data: dict, selected: int):
 def history(data: dict):
     lines=[]
     for item in data.get("observations", []):
-        lines.extend([Text(f"{str(item.get('created_at',''))[-8:]}  МАКСИМ", style=MUTED), Text(f"«{_short(item.get('user_message'), 104)}»", style="white"), _delta_rows(item, maximum=8, details=True, include_dialogue=True), Text("─" * 72, style=MUTED)])
+        lines.extend([Text(f"{str(item.get('created_at',''))[-8:]}  СОБЕСЕДНИК", style=MUTED), Text(f"«{_short(item.get('user_message'), 104)}»", style="white"), _delta_rows(item, maximum=8, details=True, include_dialogue=True), Text("─" * 72, style=MUTED)])
     for event in data.get("events", [])[:10]: lines.extend([Text(f"{event.get('starts_at','')}  СОБЫТИЕ", style=WARNING), Text(f"{event.get('title','—')} · {AVAILABILITY.get(event.get('availability'),event.get('availability','—'))}")])
     return panel("ИСТОРИЯ · ВСЁ", Group(*lines) if lines else Text("История ещё пуста.", style=MUTED))
 
@@ -141,3 +141,44 @@ def state(data: dict):
     memory=Text(f"Активные эпизоды: {episode.get('active',0)}\nНеразрешённые: {episode.get('unresolved',0)}")
     runtime=Text(f"БД: read-only\nProvider/model: {generation.get('model','—')}\nСессия: {str(generation.get('session_id') or '—')[-30:]}\nRuntime heartbeat: неизвестно")
     return Columns([panel("ДИАЛОГ", dialogue), panel("ПАМЯТЬ", memory), panel("RUNTIME", runtime)], equal=True, expand=True)
+
+
+_TELEGRAM_STATE = {
+    "received": "получено", "scheduled_read": "ожидает прочтения",
+    "read_ack_requested": "прочтение запрошено", "read_ack_confirmed": "прочитано Telegram",
+    "decision_pending": "решение готовится", "response_scheduled": "ответ запланирован",
+    "silence": "выбрано молчание", "sent": "отправлено", "recipient_read": "прочитано собеседником",
+}
+
+
+def telegram(data: dict):
+    rows = data.get("telegram", [])
+    current = {}
+    for row in rows:
+        key = (row.get("direction"), row.get("message_id"))
+        current.setdefault(key, row)
+    summary = Table.grid(expand=True, padding=(0, 1)); summary.add_column(); summary.add_column(justify="right")
+    incoming = list(row for key, row in current.items() if key[0] == "incoming")
+    outgoing = list(row for key, row in current.items() if key[0] == "outgoing")
+    summary.add_row("Получено", str(len(incoming)))
+    summary.add_row("Прочитано Telegram", str(sum(row.get("read_watermark") is not None for row in incoming)))
+    summary.add_row("Ответ запланирован", str(sum(row.get("status") == "response_scheduled" for row in incoming)))
+    summary.add_row("Отправлено", str(sum(row.get("status") == "sent" for row in outgoing)))
+    table = Table(expand=True, header_style=f"bold {ACCENT}", box=None)
+    for heading in ("Время", "Направление", "ID", "Статус", "Watermark", "Источник"):
+        table.add_column(heading)
+    for row in rows[:36]:
+        event_status = row.get("event_status") or row.get("status")
+        table.add_row(
+            str(row.get("created_at") or row.get("updated_at") or "")[-8:],
+            "входящее" if row.get("direction") == "incoming" else "исходящее",
+            str(row.get("message_id") or "—"),
+            _TELEGRAM_STATE.get(event_status, str(event_status or "—")),
+            str(row.get("read_watermark") if row.get("read_watermark") is not None else "—"),
+            str(row.get("source") or "—"),
+        )
+    notice = Text(
+        "Watermark подтверждает Telegram. Отметка прочтения исходящего сообщения приходит только от собеседника; monitor её не подменяет.",
+        style=MUTED,
+    )
+    return Group(Columns([panel("ЦЕПОЧКА ДОСТАВКИ", summary), panel("ПРАВИЛО", notice)], expand=True, equal=True), panel("TELEGRAM · ПОСЛЕДНИЕ ПЕРЕХОДЫ", table if rows else Text("MTProto-статусов пока нет.", style=MUTED)))

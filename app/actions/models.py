@@ -83,3 +83,6 @@ class QueuedAction(BaseModel):
     chat_id: int
     generation_id: str
     action: Action
+    # Durable action slot for real Telegram executors. Synthetic pauses do not
+    # have one because they never create an external side effect.
+    action_index: int | None = None

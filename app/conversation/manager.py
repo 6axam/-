@@ -32,7 +32,20 @@ class ConversationManager:
         # deliberately separate from ActionQueue typing, which happens just
         # before each individual outgoing message.
         self.typing_sessions: dict[int, tuple[str, object]] = {}
+        # Main wires this only for transports that persist delivery state.
+        # Keeping it optional preserves the core conversation contract.
+        self.delivery_status_hook = None
         if scheduler: scheduler.bind(self)
+
+    async def _report_delivery_status(self, chat_id: int, turn_id: int | None, status: str) -> None:
+        if not self.delivery_status_hook:
+            return
+        try:
+            await self.delivery_status_hook(chat_id, turn_id, status)
+        except Exception:
+            # This status is observability, not a reason to abandon a valid
+            # conversation decision or duplicate a queued Telegram action.
+            log.exception("delivery_status_hook_failed chat_id=%s turn_id=%s status=%s", chat_id, turn_id, status)
 
     @staticmethod
     def _accepts_keyword(callable_, name: str) -> bool:
@@ -124,10 +137,12 @@ class ConversationManager:
             return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
         if daily_state and daily_state["availability"] == "sleep":
             await self.scheduler.schedule_at(user_id, chat_id, generation, daily_state["sleep_until"], "normal")
+            await self._report_delivery_status(chat_id, turn_id, "response_scheduled")
             log.info("presence_sleep_defers_turn chat_id=%s until=%s", chat_id, daily_state["sleep_until"])
             return generation
         if self.scheduler and await self.scheduler.has_pending(chat_id):
             await self.scheduler.schedule(user_id, chat_id, generation, "normal")
+            await self._report_delivery_status(chat_id, turn_id, "response_scheduled")
             return generation
         if self.scheduler:
             active_check = getattr(self.scheduler, "is_active_conversation", None)
@@ -137,6 +152,7 @@ class ConversationManager:
                 # This deterministic path avoids an unnecessary timing LLM
                 # request; scheduler still applies busy/away caps.
                 await self.scheduler.schedule(user_id, chat_id, generation, "normal", daily_state=daily_state)
+                await self._report_delivery_status(chat_id, turn_id, "response_scheduled")
                 log.info("timing_decision_skipped_active_conversation chat_id=%s", chat_id)
                 return generation
             # A free period without a persisted busy/away event always goes
@@ -176,6 +192,7 @@ class ConversationManager:
             if timing.mode == "delayed":
                 await self._stop_generation_typing(chat_id, generation)
                 await self.scheduler.schedule(user_id, chat_id, generation, timing.urgency, daily_state=daily_state)
+                await self._report_delivery_status(chat_id, turn_id, "response_scheduled")
                 return generation
         return await self._generate(user_id, chat_id, text, generation, turn_id, target_message_id, user_content)
 
@@ -374,8 +391,10 @@ class ConversationManager:
                 log.exception("event_journal_decision_failed chat_id=%s generation=%s", chat_id, generation)
         if not response.actions or all(action.type == ActionType.silence for action in response.actions):
             log.info("silence_selected chat_id=%s generation=%s", chat_id, generation)
+            await self._report_delivery_status(chat_id, turn_id, "silence")
             return generation
         await self.queue.enqueue_many(chat_id,generation,response.actions)
+        await self._report_delivery_status(chat_id, turn_id, "response_scheduled")
         # Queue acceptance is the delivery-pipeline boundary.  Do not consume
         # today's ritual before enqueue succeeds.
         if bedtime_state and bedtime_state.get("bedtime_window") and not bedtime_state.get("already_said_goodnight"):

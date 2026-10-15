@@ -39,9 +39,10 @@ class ReadTimingEngine:
 
 class ReadScheduler:
     """One durable read claim per batch; a later unread tail gets a new job."""
-    def __init__(self, db, presence, timing: ReadTimingEngine, poll_seconds: float = 1.0, now=None):
+    def __init__(self, db, presence, timing: ReadTimingEngine, poll_seconds: float = 1.0, now=None, transport: str = "bot_api"):
         self.db, self.presence, self.timing, self.poll_seconds = db, presence, timing, poll_seconds
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self.transport = transport
         self.on_messages_read = None
 
     def bind(self, callback):
@@ -50,7 +51,7 @@ class ReadScheduler:
     async def schedule(self, user_id: int, chat_id: int, boundary_message_id: int, *, force_now: bool = False):
         state = await self.presence.state(chat_id)
         existing = await self.db.fetchone(
-            "SELECT * FROM scheduled_reads WHERE chat_id=? AND status='pending' ORDER BY id DESC LIMIT 1", (chat_id,)
+            "SELECT * FROM scheduled_reads WHERE chat_id=? AND transport=? AND status='pending' ORDER BY id DESC LIMIT 1", (chat_id, self.transport)
         )
         if existing:
             boundary = max(existing["boundary_message_id"], boundary_message_id)
@@ -74,8 +75,8 @@ class ReadScheduler:
             read_at = now + timedelta(seconds=delay)
         read_after = read_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         result = await self.db.execute(
-            "INSERT INTO scheduled_reads(chat_id,user_id,boundary_message_id,read_after,status) VALUES(?,?,?,?, 'pending')",
-            (chat_id, user_id, boundary_message_id, read_after),
+            "INSERT INTO scheduled_reads(chat_id,user_id,boundary_message_id,read_after,status,transport) VALUES(?,?,?,?, 'pending',?)",
+            (chat_id, user_id, boundary_message_id, read_after, self.transport),
         )
         event = state.get("event")
         log.info(
@@ -86,14 +87,14 @@ class ReadScheduler:
         return result.lastrowid
 
     async def recover_after_restart(self):
-        result = await self.db.execute("UPDATE scheduled_reads SET status='pending',updated_at=CURRENT_TIMESTAMP WHERE status='processing'")
+        result = await self.db.execute("UPDATE scheduled_reads SET status='pending',updated_at=CURRENT_TIMESTAMP WHERE transport=? AND status='processing'", (self.transport,))
         if result.rowcount:
             log.info("read_recovered_after_restart count=%s", result.rowcount)
 
     async def is_current(self, record) -> bool:
         row = await self.db.fetchone(
-            "SELECT 1 FROM scheduled_reads WHERE id=? AND chat_id=? AND status='processing'",
-            (record["id"], record["chat_id"]),
+            "SELECT 1 FROM scheduled_reads WHERE id=? AND chat_id=? AND transport=? AND status='processing'",
+            (record["id"], record["chat_id"], self.transport),
         )
         return bool(row)
 
@@ -106,20 +107,20 @@ class ReadScheduler:
         the latest durable boundary.
         """
         claimed = await self.db.execute(
-            "UPDATE scheduled_reads SET status='processing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
-            (read_id,),
+            "UPDATE scheduled_reads SET status='processing',updated_at=CURRENT_TIMESTAMP WHERE id=? AND transport=? AND status='pending'",
+            (read_id, self.transport),
         )
         if not claimed.rowcount:
             return None
         return await self.db.fetchone(
-            "SELECT * FROM scheduled_reads WHERE id=? AND status='processing'", (read_id,)
+            "SELECT * FROM scheduled_reads WHERE id=? AND transport=? AND status='processing'", (read_id, self.transport)
         )
 
     async def process_due(self):
         if not self.on_messages_read:
             return
         records = await self.db.fetchall(
-            "SELECT * FROM scheduled_reads WHERE status='pending' AND julianday(read_after)<=julianday('now') ORDER BY read_after,id"
+            "SELECT * FROM scheduled_reads WHERE transport=? AND status='pending' AND julianday(read_after)<=julianday('now') ORDER BY read_after,id", (self.transport,)
         )
         for snapshot in records:
             record = await self.claim(snapshot["id"])
@@ -127,11 +128,23 @@ class ReadScheduler:
                 continue
             log.info("read_due chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
             try:
-                await self.on_messages_read(record)
+                completed = await self.on_messages_read(record)
             except Exception:
                 log.exception("read_processing_failed chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
                 continue
-            await self.db.execute("UPDATE scheduled_reads SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'", (record["id"],))
+            if completed is False:
+                # A transport may have accepted a read RPC but still be
+                # waiting for Telegram's authoritative watermark/update. Keep
+                # the same durable job instead of treating a local callback as
+                # confirmation or generating a response prematurely.
+                await self.db.execute(
+                    "UPDATE scheduled_reads SET status='pending',read_after=datetime('now','+5 seconds'),updated_at=CURRENT_TIMESTAMP "
+                    "WHERE id=? AND transport=? AND status='processing'",
+                    (record["id"], self.transport),
+                )
+                log.info("read_confirmation_deferred chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
+                continue
+            await self.db.execute("UPDATE scheduled_reads SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=? AND transport=? AND status='processing'", (record["id"], self.transport))
             log.info("read_completed chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
 
     async def run(self):

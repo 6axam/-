@@ -19,7 +19,7 @@ async def test_user_home_claim_is_actor_scoped_while_anya_is_at_college(tmp_path
     _, context, breakdown = await ContextBuilder(db).build_with_breakdown(
         1, 10, "я уже дома", life_state={"phase": "college", "availability": "available", "event": None},
     )
-    assert "MAXIM: я уже дома" in context
+    assert "USER: я уже дома" in context
     assert "ANYA: напишу, как домой приеду" in context
     assert "phase=college" in context
     assert "has not arrived home" in context
@@ -32,7 +32,7 @@ async def test_actor_and_conditional_promise_contract_is_in_system_prompt(tmp_pa
     system, context, _ = await ContextBuilder(db).build_with_breakdown(
         1, 10, "меня отпустили с пар", life_state={"phase": "college", "availability": "available", "event": None}, self_life_gate_open=True,
     )
-    assert "MAXIM's first person is MAXIM" in context
+    assert "USER's first person is USER" in context
     assert "conditional promise due" in context
     assert "continuation_gate never confirms" in context
     assert "phase=college" in context and "continuation_gate=open" in context
@@ -47,5 +47,5 @@ async def test_user_sleep_or_arrival_never_changes_anya_presence_context(tmp_pat
         1, 10, "я уже приехал", life_state={"phase": "college", "availability": "available", "event": None},
     )
     assert context.count("phase=college") >= 1
-    assert "MAXIM: я ложусь спать" in context
+    assert "USER: я ложусь спать" in context
     await db.close()

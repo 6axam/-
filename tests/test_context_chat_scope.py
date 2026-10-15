@@ -63,7 +63,7 @@ async def test_context_history_is_strictly_scoped_to_chat_including_assistant_re
     assert "PRIVATE_SECRET" in private_context
     assert "PRIVATE_ASSISTANT_REPLY" in private_context
     assert "PRIVATE_MEDIA_DESCRIPTION" in private_context
-    assert "Максим поставил ❤️" in private_context
+    assert "Собеседник поставил ❤️" in private_context
     assert "GROUP_MESSAGE" not in private_context
     assert "GROUP_ASSISTANT_REPLY" not in private_context
     assert "GROUP_MEDIA_DESCRIPTION" not in private_context
@@ -74,5 +74,5 @@ async def test_context_history_is_strictly_scoped_to_chat_including_assistant_re
     assert "PRIVATE_SECRET" not in group_context
     assert "PRIVATE_ASSISTANT_REPLY" not in group_context
     assert "PRIVATE_MEDIA_DESCRIPTION" not in group_context
-    assert "Максим поставил ❤️" not in group_context
+    assert "Собеседник поставил ❤️" not in group_context
     await db.close()

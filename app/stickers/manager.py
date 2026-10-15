@@ -36,11 +36,11 @@ class StickerManager:
         row = await self.db.fetchone("SELECT id FROM stickers WHERE file_unique_id=?", (sticker.file_unique_id,))
         if row and chat_id is not None: await self.record_usage(row["id"], chat_id, "incoming")
 
-    async def register_incoming(self, sticker):
+    async def register_incoming(self, sticker, *, queue_analysis: bool = True):
         """A sticker without a pack still gets a semantic record and can be understood."""
         await self.db.execute("INSERT OR IGNORE INTO stickers(file_id,file_unique_id,set_name,emoji,sticker_type) VALUES(?,?,?,?,?)", (sticker.file_id, sticker.file_unique_id, getattr(sticker, "set_name", None), sticker.emoji or "", self.sticker_type(sticker)))
         row = await self.db.fetchone("SELECT id FROM stickers WHERE file_unique_id=?", (sticker.file_unique_id,))
-        if not await self.db.fetchone("SELECT sticker_id FROM sticker_semantics WHERE sticker_id=?", (row["id"],)):
+        if queue_analysis and not await self.db.fetchone("SELECT sticker_id FROM sticker_semantics WHERE sticker_id=?", (row["id"],)):
             await self.queue_analysis(row["id"], 100)
         return row["id"]
 
@@ -58,7 +58,7 @@ class StickerManager:
         row = await self.db.fetchone("SELECT visual_description,animation_description,meanings_json FROM sticker_semantics ss JOIN stickers s ON s.id=ss.sticker_id WHERE s.file_unique_id=?", (file_unique_id,))
         if not row: return None
         motion = f"; движение: {row['animation_description']}" if row["animation_description"] else ""
-        return f"Максим отправил стикер: {row['visual_description']}{motion}. Смысл: {', '.join(json.loads(row['meanings_json']))}."
+        return f"Собеседник отправил стикер: {row['visual_description']}{motion}. Смысл: {', '.join(json.loads(row['meanings_json']))}."
 
     async def semantic_for_file_id(self, file_id: str) -> str | None:
         """Resolve a persisted incoming sticker after its internal read delay."""

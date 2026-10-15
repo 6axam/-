@@ -16,6 +16,24 @@ from app.telegram.transport import TelegramTransport, TransportCapabilities
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ReadAcknowledgement:
+    """Result of a requested receipt, distinct from a Telegram confirmation."""
+
+    requested: bool
+    confirmed: bool
+    server_watermark: int | None
+    rpc_returned_true: bool
+
+
+@dataclass(frozen=True)
+class MessageReadUpdate:
+    account_id: int
+    peer_id: int
+    max_message_id: int
+    inbox: bool
+
+
 class MTProtoSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     telegram_api_id: int | None = None
@@ -59,13 +77,19 @@ class MTProtoSettings(BaseSettings):
 
 class MTProtoTransport(TelegramTransport):
     name = "mtproto"
-    capabilities = TransportCapabilities(reactions=True, edit=True, delete=True, read_receipts=True, voice=True, stickers=True, albums=True, typing=True, contact_block=True)
+    # Capabilities are a contract for the live adapter, not a list of every
+    # feature the Telegram protocol could theoretically support.
+    capabilities = TransportCapabilities(
+        reactions=True, edit=False, delete=False, read_receipts=True,
+        voice=True, stickers=True, albums=False, typing=True, contact_block=False,
+    )
 
     def __init__(self, settings: MTProtoSettings, *, client_factory=None):
         self.settings, self._client_factory, self.client = settings, client_factory, None
         # An update already contains the exact InputPeer required for receipts,
         # typing and replies. Retaining it avoids a fragile second lookup by ID.
         self._private_peers: dict[int, Any] = {}
+        self._account_id: int | None = None
 
     def _secure_session_path(self) -> Path:
         path = self.settings.session_path
@@ -99,8 +123,14 @@ class MTProtoTransport(TelegramTransport):
             result["display_name"] = " ".join(filter(None, [getattr(me, "first_name", None), getattr(me, "last_name", None)])) or None
         return result
 
-    async def run_private_inbound(self, on_event) -> None:
-        """Run only allowlisted incoming private text events until disconnected."""
+    async def account_id(self) -> int:
+        if self._account_id is None:
+            client = await self.connect()
+            self._account_id = int((await client.get_me()).id)
+        return self._account_id
+
+    async def run_private_inbound(self, on_event, on_message_read=None) -> None:
+        """Run only allowlisted incoming private text/sticker events until disconnected."""
         self.settings.require_live_runtime()
         client = await self.connect()
         if not await client.is_user_authorized():
@@ -109,13 +139,30 @@ class MTProtoTransport(TelegramTransport):
             from telethon import events
         except ImportError as exc:
             raise RuntimeError("Telethon is not installed. Run: ./.venv/bin/pip install -r requirements.txt") from exc
-        me = await client.get_me()
-        account_id = int(me.id)
+        account_id = await self.account_id()
+
+        async def receive_message_read(read_event, *, inbox: bool) -> None:
+            if not on_message_read:
+                return
+            peer_id = getattr(read_event, "chat_id", None)
+            max_message_id = getattr(read_event, "max_id", None)
+            # This live runtime deliberately knows only allowlisted personal
+            # chats. Do not create a receipt trail for a group or a stranger.
+            if not peer_id or not max_message_id or int(peer_id) not in self.settings.allowlist:
+                return
+            log.info(
+                "mtproto_message_read_update direction=%s peer_id=%s max_message_id=%s",
+                "inbox" if inbox else "outbox", peer_id, max_message_id,
+            )
+            await on_message_read(MessageReadUpdate(
+                account_id=account_id, peer_id=int(peer_id),
+                max_message_id=int(max_message_id), inbox=inbox,
+            ))
 
         @client.on(events.NewMessage(incoming=True))
         async def receive(raw_event):
-            # Groups, channels, outgoing echo events, service events and media
-            # all remain outside the first live text-only slice.
+            # Groups, channels and outgoing echoes are intentionally outside
+            # this account's allowlisted private-conversation runtime.
             if not getattr(raw_event, "is_private", False) or getattr(raw_event, "out", False):
                 return
             sender = await raw_event.get_sender()
@@ -128,22 +175,34 @@ class MTProtoTransport(TelegramTransport):
                 self._private_peers[int(peer_id)] = input_peer
             message = raw_event.message
             text = (getattr(raw_event, "raw_text", "") or "").strip()
-            if not text:
+            document = getattr(message, "document", None)
+            is_sticker = bool(getattr(message, "sticker", False) and document)
+            if not text and not is_sticker:
                 return
             reply_to = getattr(getattr(message, "reply_to", None), "reply_to_msg_id", None)
             from app.telegram.transport import InboundKind, NormalizedInboundEvent
+            emoji = next((getattr(attr, "alt", None) for attr in getattr(document, "attributes", []) if getattr(attr, "alt", None)), None) if is_sticker else None
             event = NormalizedInboundEvent(
                 transport=self.name,
                 account_id=account_id,
                 peer_id=int(peer_id),
                 sender_id=int(sender_id),
                 message_id=int(raw_event.id),
-                kind=InboundKind.text,
+                kind=InboundKind.sticker if is_sticker else InboundKind.text,
                 occurred_at=getattr(message, "date", None) or datetime.now(timezone.utc),
                 text=text,
                 reply_to_message_id=reply_to,
+                media={"document": document, "emoji": emoji} if is_sticker else {},
             )
             await on_event(event, getattr(sender, "username", None))
+
+        @client.on(events.MessageRead(inbox=True))
+        async def inbox_read(read_event):
+            await receive_message_read(read_event, inbox=True)
+
+        @client.on(events.MessageRead(inbox=False))
+        async def outbox_read(read_event):
+            await receive_message_read(read_event, inbox=False)
 
         await client.run_until_disconnected()
 
@@ -153,22 +212,39 @@ class MTProtoTransport(TelegramTransport):
         client = await self.connect()
         return await client.get_input_entity(peer_id)
 
-    async def mark_read(self, peer_id: int, max_message_id: int) -> None:
+    async def inbox_read_watermark(self, peer) -> int | None:
+        """Ask Telegram for the authoritative inbox watermark for one peer."""
+        client = await self.connect()
+        try:
+            from telethon.tl.functions.messages import GetPeerDialogsRequest
+            from telethon.tl.types import InputDialogPeer
+            result = await client(GetPeerDialogsRequest([InputDialogPeer(peer=peer)]))
+            watermarks = [
+                int(dialog.read_inbox_max_id or 0)
+                for dialog in getattr(result, "dialogs", [])
+                if getattr(dialog, "read_inbox_max_id", None) is not None
+            ]
+            return max(watermarks, default=None)
+        except Exception:
+            # The acknowledgement may still be applied and arrive as a
+            # MessageRead update. This is diagnostic, not proof of failure.
+            log.warning("mtproto_read_watermark_query_failed", exc_info=True)
+            return None
+
+    async def mark_read(self, peer_id: int, max_message_id: int) -> ReadAcknowledgement:
         client = await self.connect()
         peer = await self.resolve_peer(peer_id)
-        last_error = None
-        for attempt in range(2):
-            try:
-                acknowledged = await client.send_read_acknowledge(peer, message=max_message_id)
-                if acknowledged:
-                    log.info("mtproto_read_acknowledged peer_id=%s max_message_id=%s", peer_id, max_message_id)
-                    return
-                last_error = RuntimeError("Telegram did not acknowledge the read receipt")
-            except Exception as exc:
-                last_error = exc
-            if attempt == 0:
-                await asyncio.sleep(.2)
-        raise RuntimeError("MTProto read receipt was not acknowledged") from last_error
+        rpc_result = await client.send_read_acknowledge(peer, max_id=max_message_id)
+        watermark = await self.inbox_read_watermark(peer)
+        confirmed = watermark is not None and watermark >= max_message_id
+        log.info(
+            "mtproto_read_ack_result peer_id=%s max_message_id=%s rpc_returned_true=%s server_watermark=%s confirmed=%s",
+            peer_id, max_message_id, bool(rpc_result), watermark, confirmed,
+        )
+        return ReadAcknowledgement(
+            requested=True, confirmed=confirmed, server_watermark=watermark,
+            rpc_returned_true=bool(rpc_result),
+        )
 
     async def close(self) -> None:
         if self.client:

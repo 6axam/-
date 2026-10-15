@@ -12,7 +12,7 @@ from textual.widgets import Footer, Static
 
 from app.monitor import POLL_INTERVAL_SECONDS
 from app.monitor.theme import ACCENT, GOOD, MUTED
-from app.monitor.views import emotions, events, history, overview, prompt, state, tokens
+from app.monitor.views import emotions, events, history, overview, prompt, state, telegram, tokens
 
 
 CSS = """
@@ -32,7 +32,8 @@ class AnyaMonitorApp(App[None]):
         Binding("f1", "page('overview')", "обзор"), Binding("f2", "page('tokens')", "токены"),
         Binding("f3", "page('prompt')", "промпт"), Binding("f4", "page('emotions')", "эмоции"),
         Binding("f5", "page('history')", "история"), Binding("f6", "page('events')", "события"),
-        Binding("f7", "page('state')", "состояние"), Binding("r", "refresh", "обновить"), Binding("q", "quit", "выход"),
+        Binding("f7", "page('state')", "состояние"), Binding("f8", "page('telegram')", "Telegram"),
+        Binding("r", "refresh", "обновить"), Binding("q", "quit", "выход"),
     ]
 
     def __init__(self, reader) -> None:
@@ -62,7 +63,7 @@ class AnyaMonitorApp(App[None]):
             header.update(Text("Аня Monitor · SQLite недоступна · read-only", style=MUTED)); content.update(Text("База пока недоступна. Monitor не создаёт её и не запускает миграции.", style=MUTED)); return
         latest=self.data.get("last_generation", {}); prompt_tokens=latest.get("prompt_tokens") or 0; hit=(latest.get("cached_tokens") or 0)/prompt_tokens if prompt_tokens else None
         header.update(Text.assemble(("Аня Monitor", f"bold {ACCENT}"), ("   OpenRouter" if latest else "   ожидание данных", MUTED), (f"   {latest.get('model','')}" if latest else "", "white"), (f"   cache {hit*100:.0f}%" if hit is not None else "   cache —", GOOD if hit is not None and hit >= .6 else MUTED), (f"   {_cost(latest.get('cost'))}" if latest else "   cost —", MUTED), ("   SQLite RO", GOOD), (f"   {datetime.now().astimezone():%H:%M}", MUTED)))
-        renderers={"overview":overview,"tokens":tokens,"prompt":lambda data:prompt(data,self.selected_generation),"emotions":emotions,"history":history,"events":events,"state":state}
+        renderers={"overview":overview,"tokens":tokens,"prompt":lambda data:prompt(data,self.selected_generation),"emotions":emotions,"history":history,"events":events,"state":state,"telegram":telegram}
         content.update(renderers[self.current_page](self.data))
 
 

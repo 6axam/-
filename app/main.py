@@ -38,7 +38,7 @@ from app.episodic_memory import EpisodicMemoryManager
 from app.mind import SharedStateManager
 from app.events import EventJournal, EventProcessor
 from app.telegram.mtproto.client import MTProtoSettings, MTProtoTransport
-from app.telegram.mtproto.runtime import MTProtoActionExecutor, MTProtoInboundBridge, peer_id_for_chat
+from app.telegram.mtproto.runtime import MTProtoActionExecutor, MTProtoInboundBridge, MTProtoStickerDocuments, peer_id_for_chat
 
 
 def make_provider(settings, db=None):
@@ -92,10 +92,14 @@ async def main():
         s.voice_message_tendency, Path(s.anya_voice_reference).is_file(),
     )
     if use_mtproto:
-        executor = MTProtoActionExecutor(mtproto, db, lifecycle=lifecycle)
+        mtproto_stickers = MTProtoStickerDocuments(db)
+        executor = MTProtoActionExecutor(mtproto, db, stickers=stickers, lifecycle=lifecycle,
+            image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather),
+            image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours,
+            voice_provider=voice_provider, sticker_documents=mtproto_stickers)
     else:
         executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider)
-    queue = ActionQueue(executor)
+    queue = ActionQueue(executor, transport="mtproto" if use_mtproto else "bot_api")
     provider = make_provider(s, db)
     from app.character.manager import PersonalityManager
     personality, emotional_state = PersonalityManager(db), None
@@ -110,11 +114,12 @@ async def main():
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
     self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
+    transport_name = "mtproto" if use_mtproto else "bot_api"
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
         s.college_normal_delay_multiplier, s.college_active_delay_cap_seconds,
         s.active_reply_min_seconds, s.active_reply_max_seconds,
         s.active_busy_reply_max_seconds, s.active_away_reply_max_seconds,
-    ), active_conversation_window_seconds=s.active_conversation_window_seconds)
+    ), active_conversation_window_seconds=s.active_conversation_window_seconds, transport=transport_name)
     context = ContextBuilder(db, personality, emotional_state, stickers,
                              recent_media_hours=s.recent_media_context_hours,
                              recent_max_messages=s.context_recent_max_messages,
@@ -145,35 +150,50 @@ async def main():
                                   bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
                                   shared_state=shared_state, event_processor=event_processor)
     manager.affective_engine = affective_engine
-    read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
+    read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s), transport=transport_name)
+
+    async def on_delivery_status(chat_id: int, turn_id: int | None, status: str):
+        if use_mtproto:
+            await db.transition_telegram_turn(
+                local_chat_id=chat_id, turn_id=turn_id, status=status,
+                source="conversation_decision",
+            )
+
+    manager.delivery_status_hook = on_delivery_status if use_mtproto else None
+
+    async def on_mtproto_message_read(update):
+        if update.inbox:
+            await db.confirm_mtproto_inbox_watermark(
+                account_id=update.account_id, peer_id=update.peer_id,
+                max_message_id=update.max_message_id, source="mtproto_message_read_inbox",
+            )
+        else:
+            await db.record_mtproto_outbox_read_watermark(
+                account_id=update.account_id, peer_id=update.peer_id,
+                max_message_id=update.max_message_id, source="mtproto_message_read_outbox",
+            )
 
     async def on_messages_read(record):
-        """Internal-read hook; a future MTProto adapter can send receipts here."""
-        # The MTProto trial uses its own negative logical chat namespace. Do
-        # not let durable Bot API jobs from the shared SQLite database wake an
-        # LLM generation while the separate account is being tested.
-        if use_mtproto and record["chat_id"] >= 0:
-            logging.getLogger(__name__).debug("mtproto_ignoring_legacy_read chat_id=%s", record["chat_id"])
-            return
+        """Read one durable batch only after its transport state is truthful."""
         if not await read_scheduler.is_current(record):
-            return
+            return True
         chat_id, boundary = record["chat_id"], record["boundary_message_id"]
         rows = await db.read_batch_for_boundary(chat_id, boundary)
         if not rows:
-            return
+            return True
         message_ids = [row["telegram_message_id"] for row in rows]
         buffered_content = buffer.content_for_messages(chat_id, message_ids)
         if not await read_scheduler.is_current(record):
-            return
+            return True
         parts = []
         sticker_semantics = {}
         for row in rows:
             if row["type"] == "sticker":
                 semantic = await stickers.semantic_for_file_id(row["sticker_file_id"])
                 sticker_semantics[row["telegram_message_id"]] = semantic
-                parts.append(semantic or "Максим отправил стикер.")
+                parts.append(semantic or "Собеседник отправил стикер.")
             elif row["type"] == "photo":
-                parts.append((row["text"] or "[Максим отправил изображение]").strip())
+                parts.append((row["text"] or "[Собеседник отправил изображение]").strip())
             else:
                 parts.append(row["text"] or "")
         merged = "\n".join(part for part in parts if part) or "[сообщение без текста]"
@@ -182,7 +202,7 @@ async def main():
         # own read event rather than triggering a reply to the old batch.
         if await db.has_unread_user_message_after(chat_id, boundary):
             logging.getLogger(__name__).info("read_batch_superseded chat_id=%s boundary_message_id=%s", chat_id, boundary)
-            return
+            return True
         turn_id = await db.ensure_turn_for_batch(
             user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=message_ids,
         )
@@ -195,13 +215,34 @@ async def main():
         if not provider.supports_vision and any(row["type"] == "photo" for row in rows):
             logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
         if mtproto and chat_id < 0:
+            await db.transition_telegram_messages(
+                local_chat_id=chat_id, message_ids=message_ids,
+                status="read_ack_requested", source="mtproto_read_request",
+            )
             try:
-                await mtproto.mark_read(peer_id_for_chat(chat_id), max(message_ids))
+                acknowledgement = await mtproto.mark_read(peer_id_for_chat(chat_id), max(message_ids))
             except Exception:
                 logging.getLogger(__name__).warning("mtproto_read_receipt_failed chat_id=%s", chat_id, exc_info=True)
+                return False
+            if not acknowledgement.confirmed:
+                logging.getLogger(__name__).info(
+                    "mtproto_read_receipt_waiting_confirmation chat_id=%s boundary_message_id=%s server_watermark=%s",
+                    chat_id, boundary, acknowledgement.server_watermark,
+                )
+                return False
+            await db.confirm_mtproto_inbox_watermark(
+                account_id=await mtproto.account_id(), peer_id=peer_id_for_chat(chat_id),
+                max_message_id=max(message_ids), source="mtproto_server_watermark",
+            )
+            await db.transition_telegram_messages(
+                local_chat_id=chat_id, message_ids=message_ids,
+                status="decision_pending", source="conversation_start",
+            )
+            await db.mark_messages_read(chat_id, message_ids)
         await manager.handle_turn(user_id, chat_id, merged, turn_id, message_ids[-1], images)
         await db.mark_messages_read(chat_id, message_ids)
         buffer.clear_content(chat_id, message_ids)
+        return True
 
     read_scheduler.bind(on_messages_read)
 
@@ -210,8 +251,14 @@ async def main():
         user_id = messages[-1].from_user.id
         force_now = any(ConversationManager.TEST_WAKE_PHRASE in (message.text or message.caption or "").lower() for message in messages)
         await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages), force_now=force_now)
+        if use_mtproto and chat_id < 0:
+            await db.transition_telegram_messages(
+                local_chat_id=chat_id,
+                message_ids=[message.message_id for message in messages],
+                status="scheduled_read", source="read_scheduler",
+            )
     buffer = IncomingBuffer(s.debounce_seconds,flush)
-    mtproto_bridge = MTProtoInboundBridge(db, buffer, manager, lifecycle) if mtproto else None
+    mtproto_bridge = MTProtoInboundBridge(db, buffer, manager, lifecycle, stickers, mtproto_stickers) if mtproto else None
     initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
     manager.initiative_scheduler = initiative
     worker = StickerAnalysisWorker(db, bot, stickers, provider, s)
@@ -232,7 +279,7 @@ async def main():
             if not use_mtproto and provider.supports_vision:
                 tg.create_task(photo_worker.run())
             if mtproto:
-                tg.create_task(mtproto.run_private_inbound(mtproto_bridge.receive))
+                tg.create_task(mtproto.run_private_inbound(mtproto_bridge.receive, on_mtproto_message_read))
             else:
                 tg.create_task(dp.start_polling(bot))
     finally:

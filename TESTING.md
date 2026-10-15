@@ -35,6 +35,13 @@ git diff --check
 
 | Date | Command | Result | Pytest duration | Shell elapsed | Notes |
 | --- | --- | --- | ---: | ---: | --- |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 363 passed | 9.85 s | — | Full offline suite before committing MTProto delivery-state and duplicate-send prevention work. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_transport_scheduling.py tests/test_read_scheduler.py tests/test_delayed_cancellation.py tests/test_actions.py tests/test_mtproto_runtime.py tests/test_mtproto_transport.py` | 33 passed | 1.01 s | — | P0 transport-owned claims, three MTProto turns, restart replay suppression, scheduler and ActionQueue regressions. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_context_chat_scope.py tests/test_reactions.py tests/test_actor_temporal_consistency.py tests/test_mtproto_transport.py tests/test_mtproto_runtime.py tests/test_mtproto_receipts.py tests/test_read_scheduler.py tests/test_transport_scheduling.py tests/test_delayed_cancellation.py tests/test_monitor.py` | 40 passed | 3.74 s | — | Neutral contact labels, MTProto receipt/delivery state, monitor and scheduler coverage. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 361 passed, 1 failed | 11.47 s | — | History-budget regression exposed after replacing a hardcoded contact label; corrected before the final re-run. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 362 passed | 8.84 s | — | Full offline suite after compact generic `USER` history marker. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_runtime.py tests/test_mtproto_receipts.py tests/test_read_scheduler.py tests/test_transport_scheduling.py tests/test_delayed_cancellation.py tests/test_monitor.py` | 33 passed | 1.50 s | — | MTProto server-watermark receipt confirmation, inbox/outbox update separation, durable retry, delivery-state monitor, existing scheduler cancellation/isolation. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 362 passed | 11.53 s | — | Full offline suite after truthful MTProto receipt state and monitor panel. |
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 159 passed | 7.43 s | 8.74 s | Full offline suite after Initiative v2. |
 | 2026-10-01 | `./.venv/bin/python -m pytest tests/test_context_budget.py -q` | 7 passed | 0.39 s | — | Action-tendency settings reach the primary conversation prompt. |
 | 2026-10-01 | `./.venv/bin/python -m pytest -q` | 160 passed | 14.17 s | 17.57 s | Full suite after action tendencies and testing record. |
@@ -171,6 +178,8 @@ git diff --check
 | 2026-10-15 | `./.venv/bin/python -m pytest -q` | 351 passed | 8.89 s | — | Full suite after MTProto private-text runtime integration. |
 | 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_runtime.py tests/test_time_availability.py tests/test_read_scheduler.py` | 33 passed | 0.75 s | — | MTProto acknowledged read receipts with retained peers, active-chat fast pacing and read-scheduler regressions. |
 | 2026-10-15 | `./.venv/bin/python -m pytest -q` | 353 passed | 9.78 s | — | Full suite after MTProto receipt reliability and faster active-conversation tuning. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_transport_scheduling.py tests/test_mtproto_transport.py tests/test_mtproto_runtime.py tests/test_read_scheduler.py tests/test_delayed_cancellation.py tests/test_actions.py tests/test_reactions.py tests/test_image_generation.py tests/test_voice.py` | 60 passed | 4.13 s | — | Transport-owned durable jobs, restart isolation, MTProto action delivery, unsupported sticker safety and existing media/reaction regressions. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 358 passed | 9.29 s | — | Full suite after MTProto scheduled-work isolation and supported ActionQueue delivery. |
 
 ## Maintenance rule
 
