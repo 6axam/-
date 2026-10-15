@@ -1,4 +1,6 @@
 aiogram>=3.13,<4
+telethon>=1.45,<2
+qrcode>=8,<9
 httpx>=0.27
 pydantic>=2.9
 pydantic-settings>=2.5

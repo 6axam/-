@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 
@@ -11,6 +12,9 @@ from app.tui.diorama import DioramaCanvas
 from app.tui.rendering import StyledSpan, TerminalCapabilities, TerminalRenderer
 from app.tui.state import AnyaSnapshot, aggregate_emotions, particle_budget
 from app.tui.theme import ColorMode, ColorValue
+
+if TYPE_CHECKING:
+    from app.tui.animation import AnimationFrame
 
 
 class SceneKind(str, Enum):
@@ -361,10 +365,17 @@ def render_scene(
     frame: int = 0,
     compact: bool = False,
     renderer: TerminalRenderer | None = None,
+    animation: AnimationFrame | None = None,
 ) -> Text:
     renderer = renderer or TerminalRenderer(TerminalCapabilities(ColorMode.TRUECOLOR))
     if compact:
         return _compact_scene(snapshot, decision, renderer, frame)
+    if decision.kind is SceneKind.IDLE_HOME and animation is not None:
+        # Imported lazily: pixel_scenes depends on SceneKind but the legacy
+        # selector above remains standalone and easily testable.
+        from app.tui.pixel_scenes import render_idle_home
+
+        return render_idle_home(renderer, snapshot.presence.local_time, animation)
     palette = SCENE_PALETTES[decision.kind]
     canvas = DioramaCanvas(background=palette.wall)
     anchor = SCENE_PAINTERS[decision.kind](canvas, palette, frame)

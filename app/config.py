@@ -10,6 +10,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="forbid")
     telegram_bot_token: str
     owner_telegram_id: int
+    telegram_transport: str = "bot_api"
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+    telegram_session_path: str = "data/mtproto/anya.session"
+    telegram_mtproto_enabled: bool = False
+    telegram_mtproto_dry_run: bool = True
+    telegram_allowlist: str = ""
+    telegram_auto_reply_unknown: bool = False
+    telegram_groups_enabled: bool = False
+    telegram_autonomous_outbound: bool = False
     llm_provider: str = "openai"
     llm_api_key: str
     llm_model: str = "gpt-4o-mini"
@@ -27,6 +37,10 @@ class Settings(BaseSettings):
     self_life_context_max_items: int = Field(default=8, ge=1, le=16)
     self_life_context_token_budget: int = Field(default=450, ge=80, le=2000)
     database_url: str = "sqlite:///data/companion.db"
+    observability_store_prompts: bool = True
+    # Stage 2 mirrors a global mind/contact profile while legacy per-chat
+    # state remains available during the reversible migration.
+    anya_2_shared_state_enabled: bool = True
     debounce_seconds: float = 2.0
     message_split_enabled: bool = True
     message_split_target_chars: int = 70
@@ -85,9 +99,11 @@ class Settings(BaseSettings):
     college_weekdays: Annotated[tuple[int, ...], NoDecode] = (0, 1, 2, 3, 4)
     college_normal_delay_multiplier: float = Field(default=1.5, ge=1.0, le=4.0)
     college_active_delay_cap_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
-    active_conversation_window_seconds: float = Field(default=120, ge=1, le=3600)
-    active_reply_min_seconds: float = Field(default=1, ge=0, le=300)
-    active_reply_max_seconds: float = Field(default=10, ge=0, le=300)
+    # A recent reply means the chat is an active exchange: keep its read and
+    # reply cadence distinctly faster than a cold-start message.
+    active_conversation_window_seconds: float = Field(default=600, ge=1, le=3600)
+    active_reply_min_seconds: float = Field(default=.5, ge=0, le=300)
+    active_reply_max_seconds: float = Field(default=3, ge=0, le=300)
     active_busy_read_min_seconds: float = Field(default=20, ge=0, le=300)
     active_busy_read_max_seconds: float = Field(default=60, ge=0, le=300)
     active_away_read_min_seconds: float = Field(default=45, ge=0, le=600)
@@ -96,8 +112,8 @@ class Settings(BaseSettings):
     active_away_reply_max_seconds: float = Field(default=60, ge=0, le=600)
     read_delay_free_min_seconds: float = Field(default=2, ge=0, le=3600)
     read_delay_free_max_seconds: float = Field(default=20, ge=0, le=3600)
-    read_delay_active_free_min_seconds: float = Field(default=1, ge=0, le=300)
-    read_delay_active_free_max_seconds: float = Field(default=5, ge=0, le=300)
+    read_delay_active_free_min_seconds: float = Field(default=.3, ge=0, le=300)
+    read_delay_active_free_max_seconds: float = Field(default=1.5, ge=0, le=300)
     read_delay_college_min_seconds: float = Field(default=60, ge=0, le=7200)
     read_delay_college_max_seconds: float = Field(default=900, ge=0, le=7200)
     read_delay_busy_min_seconds: float = Field(default=60, ge=0, le=7200)
@@ -127,6 +143,14 @@ class Settings(BaseSettings):
         value = value.lower().strip()
         if value not in {"openai", "openrouter"}:
             raise ValueError("LLM_PROVIDER must be 'openai' or 'openrouter'")
+        return value
+
+    @field_validator("telegram_transport")
+    @classmethod
+    def supported_telegram_transport(cls, value: str) -> str:
+        value = value.lower().strip()
+        if value not in {"bot_api", "mtproto"}:
+            raise ValueError("TELEGRAM_TRANSPORT must be 'bot_api' or 'mtproto'")
         return value
 
     @field_validator("sticker_embedding_provider")

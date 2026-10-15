@@ -351,6 +351,94 @@ MIGRATIONS = [
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """,
+    """
+    -- Local observability only. Prompt text here is not conversation memory
+    -- and is never read by ContextBuilder.
+    CREATE TABLE IF NOT EXISTS llm_generations (
+      id INTEGER PRIMARY KEY,
+      chat_id INTEGER, turn_id INTEGER REFERENCES conversation_turns(id),
+      generation_id TEXT, provider_generation_id TEXT,
+      kind TEXT NOT NULL, model TEXT NOT NULL, session_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, latency_ms INTEGER NOT NULL,
+      prompt_tokens INTEGER, cached_tokens INTEGER, cache_write_tokens INTEGER,
+      completion_tokens INTEGER, total_tokens INTEGER, cost REAL, cache_discount REAL,
+      estimated_input_tokens INTEGER, components_json TEXT NOT NULL DEFAULT '{}',
+      system_prompt TEXT, dynamic_context TEXT, user_turn TEXT, response_schema_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_llm_generations_chat_created ON llm_generations(chat_id,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS idx_llm_generations_generation ON llm_generations(generation_id);
+    CREATE TABLE IF NOT EXISTS turn_state_observations (
+      id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL,
+      turn_id INTEGER REFERENCES conversation_turns(id), generation_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, user_message TEXT NOT NULL,
+      before_json TEXT NOT NULL, after_json TEXT NOT NULL, delta_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_turn_state_chat_created ON turn_state_observations(chat_id,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS idx_turn_state_generation ON turn_state_observations(generation_id);
+    """,
+    """
+    -- Anya 2.0 shared-state foundation. Old chat-scoped affect/life tables
+    -- intentionally remain intact while the runtime migrates in stages.
+    CREATE TABLE IF NOT EXISTS anya_world_state (
+      id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL DEFAULT 1,
+      mind_json TEXT NOT NULL, life_json TEXT NOT NULL, needs_json TEXT NOT NULL DEFAULT '{}',
+      intentions_json TEXT NOT NULL DEFAULT '[]', migration_source_chat_id INTEGER,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS anya_contacts (
+      telegram_user_id INTEGER PRIMARY KEY, display_name TEXT, username TEXT, first_chat_id INTEGER,
+      relationship_json TEXT NOT NULL, affect_json TEXT NOT NULL, boundaries_json TEXT NOT NULL DEFAULT '{}',
+      policy_json TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','limited','blocked')),
+      migrated_from_chat_id INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS anya_conversation_contacts (
+      chat_id INTEGER NOT NULL, telegram_user_id INTEGER NOT NULL REFERENCES anya_contacts(telegram_user_id),
+      context_kind TEXT NOT NULL DEFAULT 'private' CHECK(context_kind IN ('private','group','channel','unknown')),
+      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(chat_id,telegram_user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_anya_conversation_contacts_user ON anya_conversation_contacts(telegram_user_id,last_seen_at DESC);
+    CREATE TABLE IF NOT EXISTS anya_2_migrations (
+      name TEXT PRIMARY KEY, details_json TEXT NOT NULL DEFAULT '{}', applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    -- Append-only causal journal.  State tables stay materialized views during
+    -- migration; this table lets later processors recover and explain why a
+    -- transition happened without replaying user text as a command.
+    CREATE TABLE IF NOT EXISTS anya_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      source TEXT NOT NULL,
+      actor_kind TEXT NOT NULL,
+      actor_id TEXT,
+      target_kind TEXT,
+      target_id TEXT,
+      scope TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      correlation_id TEXT,
+      causation_id TEXT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'recorded' CHECK(status IN ('recorded','applied','failed')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_anya_events_occurred ON anya_events(occurred_at,event_id);
+    CREATE INDEX IF NOT EXISTS idx_anya_events_actor ON anya_events(actor_kind,actor_id,occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_anya_events_causation ON anya_events(causation_id,occurred_at);
+    CREATE TABLE IF NOT EXISTS anya_event_transitions (
+      id INTEGER PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES anya_events(event_id),
+      transition_kind TEXT NOT NULL,
+      before_json TEXT NOT NULL DEFAULT '{}',
+      after_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(event_id,transition_kind)
+    );
+    """,
 ]
 
 

@@ -2,7 +2,7 @@ class ResponseTimingEngine:
     """Backend-owned timing: LLM chooses semantics, never seconds."""
     ranges = {"urgent": (1, 3), "normal": (20, 90), "low": (180, 900)}
     def __init__(self, college_normal_delay_multiplier: float = 1.5, college_active_delay_cap_seconds: float = 30.0,
-                 active_reply_min_seconds: float = 1.0, active_reply_max_seconds: float = 10.0,
+                 active_reply_min_seconds: float = .5, active_reply_max_seconds: float = 3.0,
                  active_busy_reply_max_seconds: float = 30.0, active_away_reply_max_seconds: float = 60.0):
         self.college_normal_delay_multiplier = college_normal_delay_multiplier
         self.college_active_delay_cap_seconds = college_active_delay_cap_seconds

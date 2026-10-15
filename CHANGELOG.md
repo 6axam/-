@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.26.0 — Shared mind, MTProto test runtime and visual tooling
+`unreleased` · 2026-10-15
+
+Added shared world/contact state with an append-only event bridge, read-only
+LLM monitor, MTProto QR authorization plus allowlisted private-text testing,
+and the procedural TUI preview path. Active exchanges now have a faster
+read/reply cadence and MTProto read receipts are acknowledged reliably.
+
 ## v1.25.0 — Colored TUI dioramas
 `unreleased` · 2026-10-08
 

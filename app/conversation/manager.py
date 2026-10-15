@@ -1,12 +1,13 @@
 import asyncio, inspect, logging, uuid
 from app.actions.models import Action, ActionType
+from app.events.models import EventEnvelope
 from app.llm.schemas import EmotionalUpdate, LLMRequest, LLMResponse, ResponseTiming
 
 log = logging.getLogger(__name__)
 
 class ConversationManager:
     TEST_WAKE_PHRASE = "аня, режим теста"
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None, shared_state=None, event_processor=None):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
@@ -15,6 +16,8 @@ class ConversationManager:
         self.memory_manager = memory_manager
         self.emotion_engine = emotion_engine
         self.episodic_memory = episodic_memory
+        self.shared_state = shared_state
+        self.event_processor = event_processor
         self.self_life, self.timezone_name = self_life, timezone_name
         self.bedtime_ritual_enabled, self.bedtime_window_minutes = bedtime_ritual_enabled, bedtime_window_minutes
         self.initiative_scheduler = None
@@ -98,6 +101,11 @@ class ConversationManager:
         log.debug("nonverbal_reaction_received chat_id=%s emoji=%s", chat_id, emoji)
 
     async def handle_turn(self, user_id, chat_id, text, turn_id=None, target_message_id=None, user_content=None):
+        if self.shared_state:
+            try:
+                await self.shared_state.ensure_contact(user_id, chat_id)
+            except Exception:
+                log.exception("shared_state_contact_sync_failed chat_id=%s user_id=%s", chat_id, user_id)
         expected_interrupt_version = self.interrupt_versions.get(chat_id, 0) + 1
         await self.interrupt(chat_id)
         generation = str(uuid.uuid4())
@@ -150,7 +158,8 @@ class ConversationManager:
             )
             # This compact state is deliberately only attached to the timing
             # decider. It never enters the primary conversation prompt.
-            request = LLMRequest(system=system, context=context + "\n\n" + timing_signal, user_turn=text, user_content=user_content or [])
+            request = LLMRequest(system=system, context=context + "\n\n" + timing_signal, user_turn=text, user_content=user_content or [],
+                                 telemetry={"chat_id": chat_id, "turn_id": turn_id, "generation_id": generation})
             decider = getattr(self.provider, "decide_timing", None)
             # Begin presence before the first network round-trip, including the
             # timing decision call.  The same session continues into generate.
@@ -174,6 +183,20 @@ class ConversationManager:
         if self.generations.get(chat_id) != generation:
             log.debug("Dropping stale generation before context build generation=%s", generation)
             return generation
+        inbound_event_id = None
+        if self.event_processor:
+            try:
+                record, _, _ = await self.event_processor.ingest(EventEnvelope(
+                    event_type="incoming_conversation_turn", source="telegram_bot_api", actor_kind="contact",
+                    actor_id=str(user_id), target_kind="anya", target_id="global", scope="conversation",
+                    payload={"chat_id": chat_id, "turn_id": turn_id, "telegram_message_id": target_message_id, "text_chars": len(text)},
+                    correlation_id=generation, idempotency_key=f"telegram-turn:{chat_id}:{turn_id if turn_id is not None else generation}",
+                ))
+                inbound_event_id = record["event_id"]
+            except Exception:
+                # Journaling is observability/control-plane data in this first
+                # integration pass; it must not suppress a legitimate reply.
+                log.exception("event_journal_inbound_failed chat_id=%s generation=%s", chat_id, generation)
         life_state = await self.presence.state(chat_id) if self.presence else None
         if bedtime_state is None and self.presence and self.bedtime_ritual_enabled:
             state_for = getattr(self.presence, "bedtime_state_for", None)
@@ -207,7 +230,7 @@ class ConversationManager:
         target_hint = f"\n\nCURRENT USER MESSAGE ID FOR OPTIONAL REACTION: {target_message_id}" if target_message_id else ""
         task = asyncio.create_task(self.provider.generate(LLMRequest(
             system=system, context=context, user_turn=text + target_hint,
-            user_content=user_content or [], telemetry={**breakdown, "generation_id": generation},
+            user_content=user_content or [], telemetry={**breakdown, "chat_id": chat_id, "turn_id": turn_id, "generation_id": generation},
         )))
         self.requests[chat_id] = task
         provider_failed = False
@@ -251,6 +274,7 @@ class ConversationManager:
                     log.exception("self_life_persistence_failed chat_id=%s generation=%s", chat_id, generation)
         if self.personality:
             await self.personality.apply(response.self_updates, turn_id)
+        observed_before = None
         if self.emotion_engine and not provider_failed:
             affective = getattr(self, "affective_engine", None)
             if affective:
@@ -258,12 +282,45 @@ class ConversationManager:
                 from app.emotions.expression import sanitize_current_expression
                 response.affective_appraisal = sanitize_appraisal(response.affective_appraisal, text)
                 response.current_expression = sanitize_current_expression(response.current_expression, response.affective_appraisal)
+                shared_before = await self.shared_state.contact(user_id) if self.shared_state else None
+                relationship_override = None
+                if self.shared_state:
+                    try:
+                        contact = await self.shared_state.apply_contact_appraisal(
+                            user_id, response.affective_appraisal, episode=response.memory_episode,
+                            test_mode=chat_id in self.test_mode_chats,
+                        )
+                        if contact:
+                            from app.emotions.relationship import RelationshipBondState
+                            relationship_override = RelationshipBondState(**contact["relationship"])
+                    except Exception:
+                        log.exception("shared_state_appraisal_apply_failed chat_id=%s", chat_id)
                 emotions_before = (await affective.get_emotions(chat_id)).values()
-                relationship_before = (await affective.relationship_manager.get(chat_id)).values()
-                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats, episode=response.memory_episode)
-                relationship_after = (await affective.relationship_manager.get(chat_id)).values()
+                relationship_before = (shared_before or {}).get("relationship") or (await affective.relationship_manager.get(chat_id)).values()
+                lifecycle_before = await self.lifecycle.get(chat_id) if self.lifecycle else None
+                _before, _delta, current_emotions, _profile, _behavior = await affective.apply_appraisal(chat_id, response.affective_appraisal, test_mode=chat_id in self.test_mode_chats, episode=response.memory_episode, relationship_bond=relationship_override)
+                relationship_after = relationship_override.values() if relationship_override else (await affective.relationship_manager.get(chat_id)).values()
+                observed_before = {
+                    "regulators": _before.values(), "emotions": emotions_before,
+                    "relationship": relationship_before,
+                    "lifecycle": dict(lifecycle_before) if lifecycle_before else {},
+                }
+                observed_after = {
+                    "regulators": current_emotions.values(), "emotions": _profile.values(),
+                    "behavior": _behavior.values(), "relationship": relationship_after,
+                    "current_expression": response.current_expression.values(),
+                }
                 from app.emotions.history import AffectiveHistory
                 AffectiveHistory().append(chat_id=chat_id, message_id=target_message_id, generation_id=generation, user_message=text, before=_before.values(), after=current_emotions.values(), emotions_before=emotions_before, emotions_after=_profile.values(), behavior=_behavior.values(), appraisal=response.affective_appraisal.values(), current_expression=response.current_expression.values(), relationship_before=relationship_before, relationship_after=relationship_after)
+                if self.event_processor and inbound_event_id:
+                    try:
+                        await self.event_processor.journal.transition(
+                            inbound_event_id, "affective_transition", before={"regulators": _before.values(), "relationship": relationship_before},
+                            after={"regulators": current_emotions.values(), "relationship": relationship_after},
+                            result={"appraisal": response.affective_appraisal.values()},
+                        )
+                    except Exception:
+                        log.exception("event_journal_affect_transition_failed event_id=%s", inbound_event_id)
                 affective_snapshot = self.episodic_memory.build_affective_snapshot(current_emotions, _profile, _behavior) if self.episodic_memory else None
             else:
                 current_emotions = await self.emotion_engine.apply_delta(chat_id, response.emotion_delta.values())
@@ -276,6 +333,20 @@ class ConversationManager:
             self.test_mode_chats.discard(chat_id)
         if self.lifecycle:
             await self.lifecycle.apply(chat_id, response.conversation)
+        if observed_before is not None:
+            lifecycle_after = await self.lifecycle.get(chat_id) if self.lifecycle else None
+            observed_after["lifecycle"] = dict(lifecycle_after) if lifecycle_after else {}
+            writer = getattr(self.provider, "observability", None)
+            if writer:
+                from app.observability import nested_delta
+                try:
+                    await writer.record_turn_state(
+                        chat_id=chat_id, turn_id=turn_id, generation_id=generation, user_message=text,
+                        before=observed_before, after=observed_after,
+                        delta=nested_delta(observed_before, observed_after),
+                    )
+                except Exception:
+                    log.exception("turn_state_observability_failed chat_id=%s generation=%s", chat_id, generation)
         if self.memory_extractor and self.memory_manager:
             try:
                 candidates = self.memory_extractor.extract(response.memory_candidates)
@@ -288,6 +359,19 @@ class ConversationManager:
                 # A reply that was already generated remains deliverable even
                 # if durable memory is temporarily unavailable.
                 log.exception("memory_persistence_failed chat_id=%s generation=%s", chat_id, generation)
+        if self.event_processor:
+            try:
+                decision, _, _ = await self.event_processor.ingest(EventEnvelope(
+                    event_type="conversation_decision", source="conversation_manager", actor_kind="anya",
+                    actor_id="global", target_kind="contact", target_id=str(user_id), scope="conversation",
+                    payload={"chat_id": chat_id, "generation_id": generation, "action_types": [action.type.value for action in response.actions]},
+                    correlation_id=generation, causation_id=inbound_event_id, idempotency_key=f"conversation-decision:{generation}",
+                ))
+                await self.event_processor.journal.transition(
+                    decision["event_id"], "decision_selected", result={"has_reply": bool(response.actions), "silence": not response.actions or all(action.type == ActionType.silence for action in response.actions)},
+                )
+            except Exception:
+                log.exception("event_journal_decision_failed chat_id=%s generation=%s", chat_id, generation)
         if not response.actions or all(action.type == ActionType.silence for action in response.actions):
             log.info("silence_selected chat_id=%s generation=%s", chat_id, generation)
             return generation

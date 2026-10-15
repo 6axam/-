@@ -108,7 +108,7 @@ class InitiativeScheduler:
         except TypeError:  # narrow legacy/dummy test contexts
             built = await self.context.build(user_id, chat_id)
         system, context, telemetry = (*built, {})[:3] if len(built) == 2 else built
-        decision = await self.manager.provider.decide_initiative(LLMRequest(system=system, context=context, user_turn="", telemetry={**telemetry, "kind": "initiative", "initiative_basis": basis}))
+        decision = await self.manager.provider.decide_initiative(LLMRequest(system=system, context=context, user_turn="", telemetry={**telemetry, "chat_id": chat_id, "kind": "initiative", "initiative_basis": basis}))
         log.info("initiative_llm_decision chat_id=%s should_message=%s kind=%s", chat_id, decision.should_message, decision.kind)
         if not decision.should_message: return False
         # No second probability draw: this is strictly a stale/safety fence.

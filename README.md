@@ -14,6 +14,67 @@ cp .env.example .env
 
 Заполни `TELEGRAM_BOT_TOKEN`, `OWNER_TELEGRAM_ID`, `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`. `LLM_BASE_URL` оставь пустым для стандартного URL OpenAI/OpenRouter или укажи OpenAI-compatible endpoint вручную.
 
+## Отдельный Telegram-аккаунт (MTProto, offline foundation)
+
+Bot API остаётся рабочим режимом по умолчанию. Для отдельного аккаунта Ани
+создай API credentials в [my.telegram.org](https://my.telegram.org), добавь
+`TELEGRAM_API_ID` и `TELEGRAM_API_HASH` только в локальный `.env`, затем установи
+обновлённые зависимости и выполни локальный вход:
+
+```bash
+./.venv/bin/pip install -r requirements.txt
+./.venv/bin/python -m app.telegram.mtproto login
+./.venv/bin/python -m app.telegram.mtproto status
+```
+
+Команда запросит номер, код и при необходимости 2FA **в локальном терминале**.
+Не присылай их в чат и не коммить `.env` или `data/mtproto/*.session`. Login не
+запускает replies и не пишет сторонним людям. Live smoke test доступен только
+для Saved Messages и требует `TELEGRAM_MTPROTO_DRY_RUN=false` и явного флага:
+
+```bash
+./.venv/bin/python -m app.telegram.mtproto smoke-test --confirm-saved-messages
+```
+
+Если код не приходит, а аккаунт Ани уже открыт в официальном Telegram на
+телефоне, можно войти QR-сканированием — без номера, SMS и передачи кода:
+
+```bash
+./.venv/bin/python -m app.telegram.mtproto login-qr
+```
+
+На телефоне открой Telegram → **Настройки → Устройства → Подключить устройство**
+и отсканируй QR из терминала. QR быстро обновляется; его URL в терминал не
+печатается.
+
+### Тест реального аккаунта: allowlisted private text
+
+После успешного smoke test можно временно переключить именно основной runtime
+на отдельный аккаунт. В локальном `.env` укажи:
+
+```env
+TELEGRAM_TRANSPORT=mtproto
+TELEGRAM_MTPROTO_ENABLED=true
+TELEGRAM_MTPROTO_DRY_RUN=false
+TELEGRAM_ALLOWLIST=<твой числовой Telegram user ID>
+TELEGRAM_AUTO_REPLY_UNKNOWN=false
+TELEGRAM_GROUPS_ENABLED=false
+TELEGRAM_AUTONOMOUS_OUTBOUND=false
+```
+
+Затем обычный запуск:
+
+```bash
+./.venv/bin/python -m app.main
+```
+
+В этом первом live-срезе Аня принимает **только текстовые личные сообщения**
+только от ID в allowlist, сохраняет и отвечает через уже существующие
+память/эмоции/LLM/очередь действий. Группы, неизвестные контакты, инициативы и
+автономные исходящие отключены. MTProto история хранится в отдельном внутреннем
+пространстве чатов, поэтому не смешивается с историей Bot API. Для возврата к
+старому боту поставь `TELEGRAM_TRANSPORT=bot_api`.
+
 ## Реализовано в core MVP
 
 - debounce входящих сообщений и сохранение отдельных Telegram-сообщений;

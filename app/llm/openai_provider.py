@@ -13,6 +13,7 @@ from app.llm.base import LLMProvider, ProviderError, StructuredOutputError
 from app.llm.schemas import DailyLifeDecision, ImageContent, InitiativeDecision, LLMRequest, LLMResponse, ResponseTiming, StickerSemantics, TextContent
 from app.llm.prompts import read_prompt
 from app.conversation.tokens import estimate_tokens
+from app.observability import PromptView, stable_session_id
 
 log = logging.getLogger(__name__)
 JSON_OBJECT_FORMAT = {"type": "json_object"}
@@ -75,23 +76,25 @@ class Completion:
     content: str
     usage: dict | None
     latency_ms: int
+    provider_generation_id: str | None = None
 
 
 class OpenAICompatibleProvider(LLMProvider):
     default_base_url = "https://api.openai.com/v1"
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None, *, temperature: float | None = None, transport=None, retries: int = 2, supports_vision: bool = True, supports_multiple_images: bool = True):
+    def __init__(self, api_key: str, model: str, base_url: str | None = None, *, temperature: float | None = None, transport=None, retries: int = 2, supports_vision: bool = True, supports_multiple_images: bool = True, observability=None):
         self.api_key, self.model = api_key, model
         self.base_url = (base_url or self.default_base_url).rstrip("/")
         self.temperature = temperature
         self.transport, self.retries = transport, retries
         self.supports_vision = supports_vision
         self.supports_multiple_images = supports_multiple_images
+        self.observability = observability
 
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    async def _complete(self, messages: list[dict], *, response_format: dict | None = None) -> Completion:
+    def _payload(self, messages: list[dict], response_format: dict | None, session_id: str | None) -> dict:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -99,6 +102,10 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
+        return payload
+
+    async def _complete(self, messages: list[dict], *, response_format: dict | None = None, session_id: str | None = None) -> Completion:
+        payload = self._payload(messages, response_format, session_id)
         error = None
         started = time.perf_counter()
         for attempt in range(self.retries + 1):
@@ -109,7 +116,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     raise httpx.HTTPStatusError("temporary provider error", request=response.request, response=response)
                 response.raise_for_status()
                 body = response.json()
-                return Completion(body["choices"][0]["message"]["content"], body.get("usage"), round((time.perf_counter() - started) * 1000))
+                return Completion(body["choices"][0]["message"]["content"], body.get("usage"), round((time.perf_counter() - started) * 1000), response.headers.get("x-generation-id"))
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500:
                     raise ProviderError(f"LLM API rejected the request ({exc.response.status_code})") from exc
@@ -141,6 +148,32 @@ class OpenAICompatibleProvider(LLMProvider):
             encoded = base64.b64encode(image.data).decode("ascii")
             content.append({"type": "image_url", "image_url": {"url": f"data:{image.mime_type};base64,{encoded}"}})
         return content
+
+    def _session_id(self, request: LLMRequest, kind: str) -> str | None:
+        chat_id = request.telemetry.get("chat_id")
+        return stable_session_id(int(chat_id), kind) if chat_id is not None else None
+
+    async def _observe(self, *, kind: str, request: LLMRequest, completed: Completion,
+                       response_format: dict | None, system: str, context: str, user_turn: str,
+                       session_id: str | None, estimated_input_tokens: int | None, components: dict | None) -> None:
+        if not self.observability:
+            return
+        image_notes = [f"[ИЗОБРАЖЕНИЕ: {part.mime_type}, {len(part.data) // 1024} KB]"
+                       for part in request.user_content if isinstance(part, ImageContent)]
+        visible_turn = user_turn + (("\n" + "\n".join(image_notes)) if image_notes else "")
+        try:
+            await self.observability.record_generation(
+                kind=kind, chat_id=request.telemetry.get("chat_id"), turn_id=request.telemetry.get("turn_id"),
+                generation_id=request.telemetry.get("generation_id"), model=self.model, session_id=session_id,
+                latency_ms=completed.latency_ms, usage=completed.usage, estimated_input_tokens=estimated_input_tokens,
+                components=components, provider_generation_id=completed.provider_generation_id,
+                prompt=PromptView(system, context, visible_turn,
+                                  json.dumps(response_format, ensure_ascii=False, separators=(",", ":")) if response_format else None),
+            )
+        except Exception:
+            # Telemetry must never turn a valid provider response into a failed
+            # conversation generation.
+            log.exception("llm_observability_persistence_failed kind=%s", kind)
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         if any(isinstance(part, ImageContent) for part in request.user_content):
@@ -182,7 +215,13 @@ class OpenAICompatibleProvider(LLMProvider):
                     telemetry.get("chat_id"), telemetry.get("generation_id"), telemetry["estimated_input_tokens"],
                     telemetry.get("target_input_tokens"), components,
                 )
-        completed = await self._complete(messages, response_format=conversation_response_format()); raw = completed.content
+        response_format = conversation_response_format()
+        session_id = self._session_id(request, "conversation")
+        completed = await self._complete(messages, response_format=response_format, session_id=session_id); raw = completed.content
+        await self._observe(kind="conversation", request=request, completed=completed, response_format=response_format,
+                            system=request.system + "\n" + PRIMARY_STRUCTURED_OUTPUT_INSTRUCTION,
+                            context=request.context, user_turn=request.user_turn, session_id=session_id,
+                            estimated_input_tokens=telemetry["estimated_input_tokens"], components=components)
         if has_telemetry or completed.usage or any(isinstance(part, ImageContent) for part in request.user_content):
             usage = completed.usage or {}
             log.info(
@@ -209,10 +248,14 @@ class OpenAICompatibleProvider(LLMProvider):
     async def decide_timing(self, request: LLMRequest) -> ResponseTiming:
         prompt = "Return only JSON: {\"mode\": \"immediate\"|\"delayed\", \"urgency\": \"urgent\"|\"normal\"|\"low\"}. Choose delayed only when an abstract availability rhythm is appropriate; never invent a concrete activity."
         try:
+            session_id = self._session_id(request, "timing")
             completed = await self._complete([
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": request.context + "\nUSER TURN:\n" + request.user_turn},
-            ])
+            ], session_id=session_id)
+            await self._observe(kind="timing", request=request, completed=completed, response_format=None,
+                                system=prompt, context=request.context, user_turn=request.user_turn,
+                                session_id=session_id, estimated_input_tokens=estimate_tokens(prompt + request.context + request.user_turn), components={})
             usage = completed.usage or {}
             log.info(
                 "timing_response_usage model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s cost=%s",
@@ -248,10 +291,15 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
         prompt = request.system + "\n" + INITIATIVE_STRUCTURED_OUTPUT_INSTRUCTION
         try:
+            session_id = self._session_id(request, "initiative")
+            response_format = initiative_response_format()
             completed = await self._complete(
                 [{"role": "system", "content": prompt}, {"role": "user", "content": request.context}],
-                response_format=initiative_response_format(),
+                response_format=response_format, session_id=session_id,
             )
+            await self._observe(kind="initiative", request=request, completed=completed, response_format=response_format,
+                                system=prompt, context=request.context, user_turn="", session_id=session_id,
+                                estimated_input_tokens=estimated_input_tokens, components=components)
             if telemetry:
                 usage = completed.usage or {}
                 log.info(
@@ -278,7 +326,12 @@ class OpenAICompatibleProvider(LLMProvider):
     async def decide_daily_life(self, request: LLMRequest) -> DailyLifeDecision:
         prompt = "Return only JSON matching this schema: " + json.dumps(DailyLifeDecision.model_json_schema(), ensure_ascii=False) + "\nCreate an event rarely. It must be a mundane, plausible current activity compatible with the supplied schedule; never invent drama or an excuse after an absence. create_event=false is normal."
         try:
-            raw = (await self._complete([{"role":"system","content":prompt},{"role":"user","content":request.context}])).content
+            session_id = self._session_id(request, "daily-life")
+            completed = await self._complete([{"role":"system","content":prompt},{"role":"user","content":request.context}], session_id=session_id)
+            await self._observe(kind="daily-life", request=request, completed=completed, response_format=None,
+                                system=prompt, context=request.context, user_turn="", session_id=session_id,
+                                estimated_input_tokens=estimate_tokens(prompt + request.context), components={})
+            raw = completed.content
             return DailyLifeDecision.model_validate_json(raw)
         except Exception:
             log.warning("daily_life_decision_unavailable", exc_info=True)

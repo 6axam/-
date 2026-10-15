@@ -48,13 +48,18 @@ class AffectiveEngine:
   values['energy']=clamp(values['energy']+((.85 if sleeping else .55)-values['energy'])*(1-math.exp(-hours/3)))
   values['social_need']=clamp(values['social_need']+min(.12,hours*.005))
   stamp=self._stamp(now); await self.db.execute('UPDATE affective_states SET regulators_json=?,last_advanced_at=?,updated_at=? WHERE chat_id=?',(json.dumps(values),stamp,stamp,chat_id)); return AffectiveChemistry(values)
- async def apply_appraisal(self, chat_id, appraisal, *, now=None, test_mode=False, episode=None):
+ async def apply_appraisal(self, chat_id, appraisal, *, now=None, test_mode=False, episode=None, relationship_bond=None):
   state=await self.get(chat_id,now=now); delta=appraisal_to_delta(appraisal)
   updated=state.with_delta(delta); stamp=self._stamp((now or datetime.now(timezone.utc)).astimezone(timezone.utc))
   await self.db.execute('UPDATE affective_states SET regulators_json=?,updated_at=? WHERE chat_id=?',(json.dumps(updated.values()),stamp,chat_id))
   from app.emotions.profile import calculate, behavior
   previous=await self.db.fetchone('SELECT emotions_json FROM affective_profiles WHERE chat_id=?',(chat_id,))
-  _,bond=await self.relationship_manager.apply(chat_id,appraisal,test_mode=test_mode,episode=episode,social_safety_after=updated.values()['social_safety'])
+  if relationship_bond is None:
+   _,bond=await self.relationship_manager.apply(chat_id,appraisal,test_mode=test_mode,episode=episode,social_safety_after=updated.values()['social_safety'])
+  else:
+   # Anya 2.0 owns the per-contact relationship record. The legacy manager
+   # remains a compatibility fallback, not a second writer for the same turn.
+   bond=relationship_bond
   emotions=calculate(updated, json.loads(previous['emotions_json']) if previous else None, signals=appraisal)
   await self.db.execute('INSERT INTO affective_profiles(chat_id,emotions_json,last_updated_at) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET emotions_json=excluded.emotions_json,last_updated_at=excluded.last_updated_at',(chat_id,json.dumps(emotions.values()),stamp))
   return state,delta,updated,emotions,behavior(updated,emotions,bond,night=self._night(now))

@@ -35,14 +35,20 @@ from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 from app.emotions.engine import EmotionalEngine
 from app.emotions.affective import AffectiveEngine
 from app.episodic_memory import EpisodicMemoryManager
+from app.mind import SharedStateManager
+from app.events import EventJournal, EventProcessor
+from app.telegram.mtproto.client import MTProtoSettings, MTProtoTransport
+from app.telegram.mtproto.runtime import MTProtoActionExecutor, MTProtoInboundBridge, peer_id_for_chat
 
 
-def make_provider(settings):
+def make_provider(settings, db=None):
     cls = OpenRouterProvider if settings.llm_provider == "openrouter" else OpenAIProvider
+    from app.observability import ObservabilityWriter
     return cls(settings.llm_api_key, settings.llm_model, settings.llm_base_url,
                temperature=settings.llm_temperature,
                supports_vision=settings.llm_supports_vision,
-               supports_multiple_images=settings.llm_supports_multiple_images)
+               supports_multiple_images=settings.llm_supports_multiple_images,
+               observability=ObservabilityWriter(db, store_prompts=settings.observability_store_prompts) if db else None)
 
 def make_embeddings(settings):
     return LocalSemanticEmbeddingProvider(settings.sticker_embedding_model, settings.sticker_embedding_device)
@@ -62,6 +68,13 @@ def make_voice_provider(settings):
 async def main():
     logging.basicConfig(level=logging.INFO)
     s = load_settings(); db = Database(s.database_url); await db.connect()
+    use_mtproto = s.telegram_transport == "mtproto"
+    mtproto = None
+    if use_mtproto:
+        mtproto = MTProtoTransport(MTProtoSettings())
+        # This is intentionally checked before background workers start. A
+        # typo cannot turn an allowlist test into a broader live account.
+        mtproto.settings.require_live_runtime()
     lifecycle = ConversationLifecycleManager(db, s.conversation_cooling_minutes, s.conversation_ended_hours)
     stickers = StickerManager(db, make_embeddings(s), repeat_window_hours=s.sticker_repeat_window_hours, strong_window_minutes=s.sticker_repeat_strong_window_minutes, selection_strategy=s.sticker_selection_strategy)
     bot = Bot(s.telegram_bot_token); media = MediaManager(db, bot, s.media_cache_dir, s.max_image_bytes)
@@ -78,12 +91,19 @@ async def main():
         s.voice_generation_enabled, getattr(voice_provider, "name", "unknown"), voice_provider.enabled,
         s.voice_message_tendency, Path(s.anya_voice_reference).is_file(),
     )
-    executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider); queue = ActionQueue(executor)
-    provider = make_provider(s)
+    if use_mtproto:
+        executor = MTProtoActionExecutor(mtproto, db, lifecycle=lifecycle)
+    else:
+        executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider)
+    queue = ActionQueue(executor)
+    provider = make_provider(s, db)
     from app.character.manager import PersonalityManager
     personality, emotional_state = PersonalityManager(db), None
     emotion_engine = EmotionalEngine(db, s.timezone)
     affective_engine = AffectiveEngine(db, s.timezone)
+    shared_state = SharedStateManager(db, enabled=s.anya_2_shared_state_enabled)
+    await shared_state.bootstrap()
+    event_processor = EventProcessor(EventJournal(db))
     from app.emotions.relationship import RelationshipBondManager
     relationship_manager = RelationshipBondManager(db)
     episodic_memory = EpisodicMemoryManager(db)
@@ -110,7 +130,8 @@ async def main():
                              reaction_tendency=s.reaction_tendency, voice_message_tendency=s.voice_message_tendency,
                              voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
                              episodic_memory_token_budget=s.episodic_memory_context_token_budget,
-                             episodic_memory_max_items=s.episodic_memory_max_context_items)
+                             episodic_memory_max_items=s.episodic_memory_max_context_items,
+                             shared_state=shared_state)
     context.affective_engine = affective_engine
     context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
@@ -121,12 +142,19 @@ async def main():
     manager = ConversationManager(provider, context, queue, personality, emotional_state, scheduler, splitter, lifecycle,
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
                                   self_life=self_life, timezone_name=s.timezone, bedtime_ritual_enabled=s.bedtime_ritual_enabled,
-                                  bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory)
+                                  bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
+                                  shared_state=shared_state, event_processor=event_processor)
     manager.affective_engine = affective_engine
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s))
 
     async def on_messages_read(record):
         """Internal-read hook; a future MTProto adapter can send receipts here."""
+        # The MTProto trial uses its own negative logical chat namespace. Do
+        # not let durable Bot API jobs from the shared SQLite database wake an
+        # LLM generation while the separate account is being tested.
+        if use_mtproto and record["chat_id"] >= 0:
+            logging.getLogger(__name__).debug("mtproto_ignoring_legacy_read chat_id=%s", record["chat_id"])
+            return
         if not await read_scheduler.is_current(record):
             return
         chat_id, boundary = record["chat_id"], record["boundary_message_id"]
@@ -166,6 +194,11 @@ async def main():
                     images.extend(buffered_content.get(message_id, []))
         if not provider.supports_vision and any(row["type"] == "photo" for row in rows):
             logging.getLogger(__name__).info("image_vision_skipped reason=provider_disabled chat_id=%s", chat_id)
+        if mtproto and chat_id < 0:
+            try:
+                await mtproto.mark_read(peer_id_for_chat(chat_id), max(message_ids))
+            except Exception:
+                logging.getLogger(__name__).warning("mtproto_read_receipt_failed chat_id=%s", chat_id, exc_info=True)
         await manager.handle_turn(user_id, chat_id, merged, turn_id, message_ids[-1], images)
         await db.mark_messages_read(chat_id, message_ids)
         buffer.clear_content(chat_id, message_ids)
@@ -178,24 +211,34 @@ async def main():
         force_now = any(ConversationManager.TEST_WAKE_PHRASE in (message.text or message.caption or "").lower() for message in messages)
         await read_scheduler.schedule(user_id, chat_id, max(message.message_id for message in messages), force_now=force_now)
     buffer = IncomingBuffer(s.debounce_seconds,flush)
+    mtproto_bridge = MTProtoInboundBridge(db, buffer, manager, lifecycle) if mtproto else None
     initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
     manager.initiative_scheduler = initiative
     worker = StickerAnalysisWorker(db, bot, stickers, provider, s)
     daily_life = DailyLifeScheduler(db, provider, presence, s)
     photo_worker = MediaDescriptionWorker(db, provider)
-    dp = Dispatcher(); dp.include_router(make_router(db, buffer, manager, s.owner_telegram_id, stickers=stickers, lifecycle=lifecycle, media=media, analysis_worker=worker if s.sticker_analysis_enabled and provider.supports_vision else None, current_analysis_timeout=s.sticker_current_analysis_timeout_seconds))
+    dp = None
+    if not use_mtproto:
+        dp = Dispatcher(); dp.include_router(make_router(db, buffer, manager, s.owner_telegram_id, stickers=stickers, lifecycle=lifecycle, media=media, analysis_worker=worker if s.sticker_analysis_enabled and provider.supports_vision else None, current_analysis_timeout=s.sticker_current_analysis_timeout_seconds))
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(scheduler.run())
             tg.create_task(read_scheduler.run())
-            tg.create_task(initiative.run())
-            if s.daily_life_enabled: tg.create_task(daily_life.run())
-            if s.sticker_analysis_enabled and provider.supports_vision:
+            if not use_mtproto:
+                tg.create_task(initiative.run())
+                if s.daily_life_enabled: tg.create_task(daily_life.run())
+            if not use_mtproto and s.sticker_analysis_enabled and provider.supports_vision:
                 for _ in range(min(4, max(1, s.sticker_analysis_workers))): tg.create_task(worker.run())
-            if provider.supports_vision:
+            if not use_mtproto and provider.supports_vision:
                 tg.create_task(photo_worker.run())
-            tg.create_task(dp.start_polling(bot))
-    finally: await db.close()
+            if mtproto:
+                tg.create_task(mtproto.run_private_inbound(mtproto_bridge.receive))
+            else:
+                tg.create_task(dp.start_polling(bot))
+    finally:
+        if mtproto:
+            await mtproto.close()
+        await db.close()
 
 if __name__ == '__main__':
     try:

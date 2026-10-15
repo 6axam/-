@@ -86,6 +86,13 @@ def test_emotional_timing_modifier_is_bounded_and_does_not_override_active_caps(
     assert 1 <= timing.delay("normal", eager, active_conversation=True) <= 10
 
 
+def test_default_active_exchange_timing_is_distinctly_faster_than_cold_start():
+    timing = ResponseTimingEngine()
+
+    assert timing.delay("normal", active_conversation=True) == 1.75
+    assert timing.delay("normal", active_conversation=False) > 20
+
+
 async def test_recent_assistant_timestamp_controls_shared_active_window(tmp_path):
     db = await make_db(tmp_path)
     await db.record_message(chat_id=10, telegram_message_id=1, sender="assistant", kind="text", text="hey")

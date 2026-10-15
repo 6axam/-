@@ -20,7 +20,8 @@ class ContextBuilder:
                  self_life_token_budget: int = 450, self_life_max_items: int = 8,
                  timezone_name: str = "Europe/Kyiv", sticker_tendency: float = .55,
                  reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False,
-                 emotion_engine=None, episodic_memory=None, episodic_memory_max_items: int = 6, episodic_memory_token_budget: int = 900):
+                 emotion_engine=None, episodic_memory=None, episodic_memory_max_items: int = 6, episodic_memory_token_budget: int = 900,
+                 shared_state=None):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.emotion_engine = emotion_engine
@@ -36,6 +37,7 @@ class ContextBuilder:
         self.self_life_max_items = self_life_max_items
         self.timezone_name = timezone_name
         self.sticker_tendency, self.reaction_tendency, self.voice_message_tendency, self.voice_message_available = sticker_tendency, reaction_tendency, voice_message_tendency, voice_message_available
+        self.shared_state = shared_state
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -84,12 +86,13 @@ class ContextBuilder:
 
     @staticmethod
     def _render(row) -> str:
+        actor = "MAXIM" if row["sender"] == "user" else "ANYA"
         if row["type"] == "sticker" and row["sticker_visual"]:
             meanings = ", ".join(json.loads(row["sticker_meanings"] or "[]"))
-            return f"{row['sender']}: [стикер: {row['sticker_visual']}; {meanings}]"
+            return f"{actor}: [стикер: {row['sticker_visual']}; {meanings}]"
         if row["type"] == "photo" and row["photo_description"]:
-            return f"{row['sender']}: [фото: {row['photo_description']}]"
-        return f"{row['sender']}: {row['text'] or '[' + row['type'] + ']'}"
+            return f"{actor}: [фото: {row['photo_description']}]"
+        return f"{actor}: {row['text'] or '[' + row['type'] + ']'}"
 
     async def build(self, user_id, chat_id, user_turn, delay_event=None, current_turn_id=None):
         system, context, _ = await self.build_with_breakdown(
@@ -142,6 +145,7 @@ class ContextBuilder:
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
             "episodic_memories": component_size(""),
             "current_life_state": component_size(""),
+            "shared_world_state": component_size(""), "contact_state": component_size(""),
             "delay_event_context": component_size(""),
             "bedtime_state": component_size(""),
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
@@ -196,9 +200,35 @@ class ContextBuilder:
                 f"local_time={local.strftime('%Y-%m-%d %H:%M')}; phase={life_state.get('phase', 'free')}; "
                 f"availability={life_state.get('availability', 'available')}; active_event={event_text}; "
                 f"event_mentionable={'true' if event and event['mentionable'] else 'false'}; "
-                f"continuation_gate={'open' if self_life_gate_open else 'closed'}"
+                f"continuation_gate={'open' if self_life_gate_open else 'closed'}.\n"
+                "ACTOR / TEMPORAL RULE: MAXIM's first person is MAXIM, never Anya. AUTHORITATIVE: this is Anya's real state for this reply. User claims about themselves never change it. "
+                "If phase=college, Anya has not arrived home or finished college unless a persisted Anya event explicitly says so. "
+                "User text or continuation_gate never confirms Anya's transition or makes her conditional promise due."
             )
             blocks.append(block); components["current_life_state"] = component_size(block)
+        if self.shared_state:
+            try:
+                shared = await self.shared_state.context_for(user_id, chat_id)
+                if shared:
+                    world, contact = shared
+                    mind = "; ".join(f"{name}={value:.2f}" for name, value in world.mind.items())
+                    world_block = (
+                        "SHARED ANYA MIND\n" + mind + "\n"
+                        "One character-level mood shared across conversations. Use it subtly; never quote scores or transfer a personal grievance to another contact."
+                    )
+                    relationship = "; ".join(f"{name}={float(value):.2f}" for name, value in contact["relationship"].items() if isinstance(value, (int, float)))
+                    affect = "; ".join(f"{name}={float(value):.2f}" for name, value in contact["affect"].items() if isinstance(value, (int, float)))
+                    contact_block = (
+                        "CURRENT CONTACT STATE\n"
+                        f"contact_id={contact['telegram_user_id']}; state={contact['state']}; relationship: {relationship}; contact_affect: {affect}.\n"
+                        "This belongs only to the current person. Do not disclose or use private facts from another contact."
+                    )
+                    blocks.extend((world_block, contact_block))
+                    components["shared_world_state"] = component_size(world_block)
+                    components["contact_state"] = component_size(contact_block)
+            except Exception:
+                # This compatibility bridge must never interrupt a live reply.
+                log.exception("shared_state_context_failed chat_id=%s", chat_id)
         if bedtime_state and bedtime_state.get("bedtime_window"):
             block = (
                 "BEDTIME STATE\n"
@@ -278,7 +308,7 @@ class ContextBuilder:
             salient = sorted(emotions.values().items(), key=lambda item: item[1], reverse=True)[:10]
             block = "AFFECTIVE STATE\nChemistry: " + regulators + "\nSalient emotions: " + "; ".join(f"{name}={value:.2f}" for name, value in salient) + "\nBehavior: " + "; ".join(f"{name}={value:.2f}" for name, value in behavior.values().items()) + "\nInternal guidance only: current user event may immediately shape this reply; never expose scores."
             blocks.append(block); components["affective_state"] = component_size(block)
-            if getattr(self, "relationship_manager", None):
+            if getattr(self, "relationship_manager", None) and not self.shared_state:
                 from app.emotions.relationship import relationship_context
                 bond = await self.relationship_manager.get(chat_id)
                 relational = relationship_context(bond, behavior)

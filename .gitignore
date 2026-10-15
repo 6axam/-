@@ -1,12 +1,15 @@
 .env
 assets/anya/voice_reference.*
 data/
+*.session
+*.session-journal
 __pycache__/
 *.pyc
 .venv/
 .tools/
 .pytest_cache/
 .cache/
+.codex_notes/
 *.log
 *.sqlite
 *.sqlite3

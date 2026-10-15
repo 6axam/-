@@ -28,7 +28,8 @@ git diff --check
 | Daily presence and timing | `test_time_availability.py`, `test_presence_replies.py` | sleep/wake state, college rhythm, events and response timing. |
 | Telegram actions | `test_actions.py`, `test_reactions.py`, `test_emoji_filter.py`, `test_message_splitter.py` | sequential delivery, reactions, emoji policy and human-like message splitting. |
 | Media, stickers and images | `test_vision_semantic.py`, `test_semantic_production.py`, `test_image_generation.py`, `test_openrouter_images.py` | offline media/sticker pipeline, semantic retrieval and image generation/provider payloads. |
-| Read-only terminal observer | `test_tui.py`, `test_tui_rendering.py`, `test_tui_scenes.py` | Scene priority, fixed-size dioramas, distinct palettes, in-scene particles, relationship meters, compact layout, color capability fallbacks, missing state and SQLite write protection. |
+| Read-only terminal observer | `test_tui.py`, `test_tui_rendering.py`, `test_tui_scenes.py`, `test_tui_pixels.py`, `test_tui_preview.py` | Scene priority, fixed-size dioramas, half-block logical pixels, composable sprite animation, synthetic preview controls, transitions, terminal fallbacks, relationship meters, compact layout, missing state and SQLite write protection. |
+| LLM observability and monitor | `test_observability.py`, `test_monitor.py` | Opaque stable OpenRouter sessions, defensive cache usage parsing, prompt redaction, durable telemetry, Russian labels and monitor SQLite write protection. |
 
 ## Recent runs
 
@@ -136,6 +137,40 @@ git diff --check
 | 2026-10-05 | `./.venv/bin/python -m pytest -q` | 291 passed | 11.01 s | — | Full suite after Phase 1 TUI visual foundation. |
 | 2026-10-08 | `./.venv/bin/python -m pytest -q tests/test_tui.py tests/test_tui_rendering.py tests/test_tui_scenes.py` | 40 passed | 0.48 s | — | Colored 42×14 dioramas, distinct scene palettes, chibi poses, affective particles and terminal fallbacks. |
 | 2026-10-08 | `./.venv/bin/python -m pytest -q` | 303 passed | 7.36 s | — | Full suite after colored TUI diorama scenes. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q tests/test_tui.py tests/test_tui_rendering.py tests/test_tui_scenes.py tests/test_tui_pixels.py` | 54 passed | 0.44 s | — | Logical-pixel half-block renderer, cached IDLE_HOME geometry, composable sprite, dt animation, transition and terminal fallbacks. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q` | 317 passed | 7.79 s | — | Full suite after first procedural pixel-art TUI slice. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q tests/test_tui.py tests/test_tui_rendering.py tests/test_tui_scenes.py tests/test_tui_pixels.py tests/test_tui_preview.py` | 57 passed | 0.51 s | — | Synthetic preview CLI, in-memory controls, animation loop and production-reader isolation. |
+| 2026-10-08 | `./.venv/bin/python -m pytest -q` | 320 passed | 7.80 s | — | Full suite after procedural TUI preview mode. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q tests/test_observability.py tests/test_monitor.py tests/test_llm.py tests/test_conversation.py` | 21 passed | 1.02 s | — | OpenRouter session payload, cache telemetry persistence/redaction, monitor read-only mode and conversation regressions. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q` | 325 passed | 12.76 s | 14.50 s | Full suite after observability storage and separate read-only monitor. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q tests/test_observability.py tests/test_monitor.py tests/test_llm.py tests/test_conversation.py` | 21 passed | 0.98 s | — | Final targeted regression after making telemetry persistence non-blocking. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q` | 325 passed | 12.35 s | 15.90 s | Final full suite after OpenRouter observability and monitor work. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q tests/test_monitor.py tests/test_observability.py` | 5 passed | 0.40 s | — | Read-only monitor, telemetry storage and visual monitor refactor regressions. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q` | 325 passed | 10.95 s | 14.80 s | Full suite after responsive monitor visual overhaul. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q tests/test_monitor.py tests/test_monitor_presentation.py tests/test_lifecycle_initiative.py` | 21 passed | 0.67 s | — | Unicode leader rows, semantic before/after deltas, lifecycle presentation and monitor regression checks. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q` | 329 passed | 9.71 s | 12.50 s | Full suite after monitor metric-list readability tuning. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q tests/test_actor_temporal_consistency.py tests/test_context_budget.py tests/test_lifecycle_initiative.py` | 31 passed | 1.11 s | — | Actor-scoped history, authoritative college-state and conditional-promise consistency checks. |
+| 2026-10-09 | `./.venv/bin/python -m pytest -q` | 332 passed | 10.03 s | 11.60 s | Full suite after actor/temporal consistency guardrails. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_shared_world_state.py tests/test_database.py tests/test_context_budget.py tests/test_context_chat_scope.py tests/test_conversation.py` | 20 passed | 1.00 s | — | Shared world/contact migration, conservative new-contact defaults, context scope and conversation compatibility. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 335 passed | 10.62 s | — | Full suite after Anya 2.0 Stage 2 shared-state foundation. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_shared_world_state.py tests/test_affective_chemistry.py tests/test_relationship_bond.py tests/test_relationship_sequences.py tests/test_context_budget.py tests/test_conversation.py` | 31 passed | 0.83 s | — | Shared global dt dynamics, per-contact coupling, repair inertia, legacy affect compatibility and prompt budget. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 338 passed | 9.20 s | — | Full suite after Anya 2.0 Stage 3 emotional coupling. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_event_journal.py tests/test_shared_world_state.py tests/test_conversation.py tests/test_database.py` | 12 passed | 0.44 s | — | Append-only event envelopes, idempotency, serialized ingestion, shared-state and conversation compatibility. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 340 passed | 9.17 s | — | Full suite after Anya 2.0 Stage 4 event journal bridge. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_security.py tests/test_actions.py tests/test_conversation.py` | 8 passed | 0.34 s | — | Offline MTProto DTO, fake-client status/session security, Bot API security and core compatibility. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 343 passed | 8.30 s | — | Full suite after MTProto offline transport foundation. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_conversation.py` | 4 passed | 0.21 s | — | MTProto config acceptance alongside transport and core compatibility. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 343 passed | 8.21 s | — | Full suite after accepting MTProto keys in the shared strict configuration. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_cli.py` | 4 passed | 0.15 s | — | MTProto status/session and graceful interactive cancellation. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 344 passed | 8.81 s | — | Full suite after MTProto login cancellation UX fix. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_cli.py tests/test_mtproto_login_delivery.py` | 5 passed | 0.15 s | — | MTProto safe delivery-channel diagnostics and optional SMS request. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 345 passed | 8.29 s | — | Full suite after MTProto login delivery diagnostics. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_cli.py tests/test_mtproto_login_delivery.py` | 7 passed | 0.21 s | — | Terminal QR rendering keeps the login URL out of output and authorizes only after the scan wait completes. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 347 passed | 8.28 s | — | Full suite after adding the local MTProto QR-login alternative. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_cli.py tests/test_mtproto_login_delivery.py tests/test_mtproto_runtime.py` | 11 passed | 0.56 s | — | Allowlisted private-text bridge, transport-separated chat namespace, Telethon text execution and live-runtime safety gate. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 351 passed | 8.89 s | — | Full suite after MTProto private-text runtime integration. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q tests/test_mtproto_transport.py tests/test_mtproto_runtime.py tests/test_time_availability.py tests/test_read_scheduler.py` | 33 passed | 0.75 s | — | MTProto acknowledged read receipts with retained peers, active-chat fast pacing and read-scheduler regressions. |
+| 2026-10-15 | `./.venv/bin/python -m pytest -q` | 353 passed | 9.78 s | — | Full suite after MTProto receipt reliability and faster active-conversation tuning. |
 
 ## Maintenance rule
 

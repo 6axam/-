@@ -97,32 +97,25 @@ def build_app_css(palette: CozyPalette = COZY_PALETTE) -> str:
         color: {color('accent')};
         background: {color('panel_lifted')};
     }}
-    #main {{ height: 1fr; }}
     #scene {{
-        width: 2fr;
-        height: 100%;
-        padding: 0 1;
+        width: 100%;
+        height: 1fr;
+        min-height: 16;
+        padding: 0;
         content-align: center middle;
         border: round {color('border')};
         background: {color('panel')};
     }}
-    #status {{
-        width: 1fr;
-        min-width: 30;
-        height: 100%;
-        padding: 1;
-        border: round {color('border_soft')};
-        background: {color('panel')};
-        overflow-y: auto;
-    }}
-    #activity, #events {{
+    #activity, #vitals, #events, #preview_diagnostic {{
         height: auto;
-        min-height: 3;
+        min-height: 1;
         padding: 0 2;
-        border: round {color('border_soft')};
         background: {color('panel')};
     }}
-    #events {{ color: {color('muted')}; }}
+    #activity {{ color: {color('text')}; text-style: bold; }}
+    #vitals {{ color: {color('muted')}; }}
+    #events {{ color: {color('muted')}; display: none; }}
+    #preview_diagnostic {{ color: {color('muted')}; display: none; }}
     #overlay {{
         display: none;
         layer: overlay;
@@ -136,10 +129,9 @@ def build_app_css(palette: CozyPalette = COZY_PALETTE) -> str:
         background: {color('panel_lifted')};
         overflow-y: auto;
     }}
-    Screen.compact #status {{ display: none; }}
-    Screen.compact #scene {{ width: 1fr; padding: 0 1; }}
+    Screen.compact #scene {{ width: 1fr; min-height: 2; padding: 0 1; }}
     Screen.compact #title {{ height: 1; padding: 0 1; }}
-    Screen.compact #activity {{ min-height: 2; padding: 0 1; }}
+    Screen.compact #activity, Screen.compact #vitals {{ min-height: 1; padding: 0 1; }}
     Screen.compact #events {{ display: none; }}
     Footer {{ height: 1; background: {color('panel_lifted')}; }}
     """
