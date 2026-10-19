@@ -68,6 +68,37 @@ async def test_mtproto_receipt_state_is_durable_and_outbox_never_overwrites_loca
     await db.close()
 
 
+async def test_raced_mtproto_read_update_promotes_waiting_state_without_regression(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'receipt-race.sqlite'}")
+    await db.connect()
+    await db.record_telegram_message_state(
+        transport="mtproto", account_id=11, peer_type="user", peer_id=42,
+        message_id=7, direction="incoming", local_chat_id=-42,
+        status="read_ack_requested", source="test",
+    )
+    # The RPC's immediate watermark is behind, so the callback parks it.
+    assert await db.mark_mtproto_read_confirmation_pending(
+        local_chat_id=-42, message_ids=[7], read_watermark=6, source="rpc_pending",
+    ) == 1
+    assert (await db.fetchone("SELECT status FROM telegram_message_states"))["status"] == "read_ack_waiting"
+
+    # Telethon's MessageRead update wins the race and is a real confirmation.
+    await db.confirm_mtproto_inbox_watermark(
+        account_id=11, peer_id=42, max_message_id=7, source="telethon_update",
+    )
+    assert (await db.fetchone("SELECT status,read_watermark FROM telegram_message_states"))["status"] == "read_ack_confirmed"
+    assert await db.mtproto_inbox_read_confirmed(local_chat_id=-42, message_ids=[7])
+
+    # Conversely, a delayed callback must not move the already-confirmed
+    # receipt back to a waiting state.
+    assert await db.mark_mtproto_read_confirmation_pending(
+        local_chat_id=-42, message_ids=[7], read_watermark=6, source="late_rpc_pending",
+    ) == 0
+    row = await db.fetchone("SELECT status,read_watermark FROM telegram_message_states")
+    assert tuple(row) == ("read_ack_confirmed", 7)
+    await db.close()
+
+
 async def test_read_scheduler_retries_until_transport_confirmation(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'retry.sqlite'}")
     await db.connect()
@@ -80,8 +111,28 @@ async def test_read_scheduler_retries_until_transport_confirmation(tmp_path):
 
     await scheduler.process_due()
 
-    row = await db.fetchone("SELECT status FROM scheduled_reads WHERE id=?", (read_id,))
+    row = await db.fetchone("SELECT status,read_confirmation_attempts FROM scheduled_reads WHERE id=?", (read_id,))
     assert row["status"] == "pending"
+    assert row["read_confirmation_attempts"] == 1
+    await db.close()
+
+
+async def test_read_scheduler_bounds_fast_confirmation_retries_before_diagnostic_backoff(tmp_path, caplog):
+    db = Database(f"sqlite:///{tmp_path / 'bounded-retry.sqlite'}")
+    await db.connect()
+    scheduler = ReadScheduler(
+        db, _Presence(), ReadTimingEngine(_settings(), rng=lambda *_: 0),
+        now=lambda: datetime.now(timezone.utc), transport="mtproto",
+    )
+    read_id = await scheduler.schedule(42, -42, 7)
+    await db.execute("UPDATE scheduled_reads SET read_confirmation_attempts=? WHERE id=?", (11, read_id))
+    scheduler.bind(lambda _record: _not_confirmed())
+    with caplog.at_level("WARNING"):
+        await scheduler.process_due()
+    row = await db.fetchone("SELECT status,read_confirmation_attempts,read_after FROM scheduled_reads WHERE id=?", (read_id,))
+    assert row["status"] == "pending"
+    assert row["read_confirmation_attempts"] == 0
+    assert "read_confirmation_retry_window_exhausted" in caplog.text
     await db.close()
 
 

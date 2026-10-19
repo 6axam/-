@@ -149,6 +149,19 @@ async def test_invalid_reply_target_is_removed_but_real_target_survives(tmp_path
     await db.close()
 
 
+async def test_message_mutations_only_allow_own_extant_assistant_messages(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'mutations.sqlite'}"); await db.connect()
+    await db.record_message(chat_id=3, telegram_message_id=10, sender="assistant", kind="text", text="own")
+    await db.record_message(chat_id=3, telegram_message_id=11, sender="user", user_id=1, kind="text", text="other")
+    manager = ConversationManager(SimpleNamespace(), SimpleNamespace(db=db), SimpleNamespace())
+    actions = await manager._validate_action_targets(3, [
+        Action(type=ActionType.edit, target_message_id=10, text="edited"),
+        Action(type=ActionType.delete, target_message_id=11),
+    ], 11)
+    assert [(action.type, action.target_message_id) for action in actions] == [(ActionType.edit, 10)]
+    await db.close()
+
+
 async def test_executor_sends_telegram_reply(tmp_path):
     class Bot:
         async def send_chat_action(self, *_): pass

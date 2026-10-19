@@ -22,7 +22,7 @@ def main() -> None:
     settings = load_settings()
     reader = ReadOnlyStateReader(
         settings.database_url,
-        settings.owner_telegram_id,
+        settings.primary_conversation_chat_id(),
         timezone_name=settings.timezone,
         sleep_start=settings.sleep_start_hour,
         wake_hour=settings.wake_hour,

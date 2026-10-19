@@ -68,3 +68,20 @@ async def test_outgoing_reaction_is_sent_and_persisted(tmp_path):
     row = await db.fetchone("SELECT actor,emoji,active FROM message_reactions WHERE chat_id=? AND telegram_message_id=?", (10, 55))
     assert dict(row) == {"actor": "assistant", "emoji": "❤️", "active": 1}
     await db.close()
+
+
+async def test_bot_executor_edits_and_deletes_own_message_history(tmp_path):
+    class Bot:
+        def __init__(self): self.edits = []; self.deletes = []
+        async def edit_message_text(self, **kwargs): self.edits.append(kwargs)
+        async def delete_message(self, **kwargs): self.deletes.append(kwargs)
+
+    db = Database(f"sqlite:///{tmp_path / 'mutations.sqlite'}"); await db.connect()
+    await db.record_message(chat_id=10, telegram_message_id=55, sender="assistant", kind="text", text="typo")
+    bot = Bot(); executor = TelegramActionExecutor(bot, db)
+    await executor.execute(QueuedAction(chat_id=10, generation_id="edit", action=Action(type=ActionType.edit, target_message_id=55, text="fixed")))
+    await executor.execute(QueuedAction(chat_id=10, generation_id="delete", action=Action(type=ActionType.delete, target_message_id=55)))
+    assert bot.edits == [{"chat_id": 10, "message_id": 55, "text": "fixed"}]
+    assert bot.deletes == [{"chat_id": 10, "message_id": 55}]
+    assert not await db.known_assistant_message(10, 55)
+    await db.close()

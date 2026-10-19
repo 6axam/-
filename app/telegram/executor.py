@@ -146,6 +146,21 @@ class TelegramActionExecutor:
                 return
             await self.bot.set_message_reaction(item.chat_id, a.target_message_id, reaction=[ReactionTypeEmoji(emoji=a.emoji)])
             await self.db.record_reaction(chat_id=item.chat_id, telegram_message_id=a.target_message_id, actor="assistant", emoji=a.emoji)
+        elif a.type == ActionType.edit:
+            if not a.target_message_id or not a.text or not await self.db.known_assistant_message(item.chat_id, a.target_message_id):
+                raise RuntimeError("edit target is not an extant assistant message")
+            text = strip_emoji(a.text)
+            if not text.strip():
+                raise RuntimeError("edit text is empty after transport normalization")
+            await self.bot.edit_message_text(chat_id=item.chat_id, message_id=a.target_message_id, text=text)
+            if not await self.db.update_assistant_message(item.chat_id, a.target_message_id, text):
+                raise RuntimeError("edit target changed before local history update")
+        elif a.type == ActionType.delete:
+            if not a.target_message_id or not await self.db.known_assistant_message(item.chat_id, a.target_message_id):
+                raise RuntimeError("delete target is not an extant assistant message")
+            await self.bot.delete_message(chat_id=item.chat_id, message_id=a.target_message_id)
+            if not await self.db.mark_assistant_message_deleted(item.chat_id, a.target_message_id):
+                raise RuntimeError("delete target changed before local history update")
 
     async def _generate_image_with_progress(self, prompt, references, chat_id, kind):
         """Terminal-only progress indicator; it never blocks Telegram updates."""

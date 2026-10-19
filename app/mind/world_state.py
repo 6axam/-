@@ -108,7 +108,12 @@ class SharedStateManager:
             await self._link_chat(chat_id, user_id)
 
     async def _insert_contact(self, user_id: int, chat_id: int, *, username: str | None, relationship: Mapping[str, Any] | None = None, affect: Mapping[str, Any] | None = None, migrated_from_chat_id: int | None = None) -> None:
-        await self.db.execute("INSERT INTO anya_contacts(telegram_user_id,display_name,username,first_chat_id,relationship_json,affect_json,migrated_from_chat_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(telegram_user_id) DO NOTHING", (user_id, username or None, username, chat_id, json.dumps(dict(relationship or NEW_CONTACT_RELATIONSHIP), sort_keys=True), json.dumps(dict(affect or NEW_CONTACT_AFFECT), sort_keys=True), migrated_from_chat_id))
+        await self.db.execute(
+            "INSERT INTO anya_contacts(telegram_user_id,display_name,username,first_chat_id,relationship_json,affect_json,migrated_from_chat_id) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(telegram_user_id) DO UPDATE SET username=COALESCE(excluded.username,anya_contacts.username),"
+            "display_name=COALESCE(excluded.display_name,anya_contacts.display_name),updated_at=CURRENT_TIMESTAMP",
+            (user_id, username or None, username, chat_id, json.dumps(dict(relationship or NEW_CONTACT_RELATIONSHIP), sort_keys=True), json.dumps(dict(affect or NEW_CONTACT_AFFECT), sort_keys=True), migrated_from_chat_id),
+        )
 
     async def _link_chat(self, chat_id: int, user_id: int, *, context_kind: str = "private") -> None:
         await self.db.execute("INSERT INTO anya_conversation_contacts(chat_id,telegram_user_id,context_kind) VALUES(?,?,?) ON CONFLICT(chat_id,telegram_user_id) DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP", (chat_id, user_id, context_kind))

@@ -167,6 +167,17 @@ def test_llm_temperature_loads_and_validates_range():
         Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", llm_temperature=2.01)
 
 
+def test_mtproto_settings_do_not_require_unused_bot_api_credentials():
+    settings = Settings(
+        _env_file=None, telegram_transport="mtproto", llm_api_key="key",
+        telegram_api_id=1, telegram_api_hash="a" * 32, telegram_allowlist="42",
+    )
+    assert settings.telegram_bot_token is None and settings.owner_telegram_id is None
+    assert settings.primary_conversation_chat_id() == -42
+    with pytest.raises(ValidationError, match="TELEGRAM_BOT_TOKEN"):
+        Settings(_env_file=None, llm_api_key="key")
+
+
 def test_voice_message_tendency_loads_and_validates_range():
     settings = Settings(_env_file=None, telegram_bot_token="token", owner_telegram_id=1, llm_api_key="key", voice_message_tendency=.20)
     assert settings.voice_message_tendency == .20

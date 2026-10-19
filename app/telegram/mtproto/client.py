@@ -80,16 +80,57 @@ class MTProtoTransport(TelegramTransport):
     # Capabilities are a contract for the live adapter, not a list of every
     # feature the Telegram protocol could theoretically support.
     capabilities = TransportCapabilities(
-        reactions=True, edit=False, delete=False, read_receipts=True,
+        reactions=True, edit=True, delete=True, read_receipts=True,
         voice=True, stickers=True, albums=False, typing=True, contact_block=False,
     )
 
     def __init__(self, settings: MTProtoSettings, *, client_factory=None):
         self.settings, self._client_factory, self.client = settings, client_factory, None
+        self._connect_lock = asyncio.Lock()
+        self._session_lock_handle = None
         # An update already contains the exact InputPeer required for receipts,
         # typing and replies. Retaining it avoids a fragile second lookup by ID.
         self._private_peers: dict[int, Any] = {}
         self._account_id: int | None = None
+
+    def _acquire_session_lock(self) -> None:
+        """Prevent two local runtimes from opening the same Telethon session."""
+        if self._session_lock_handle is not None:
+            return
+        # This runtime is Linux-first. Keep the import local so offline tools
+        # can still import the transport on platforms without fcntl.
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - Windows has its own locking
+            return
+        lock_path = self._secure_session_path().with_suffix(self._secure_session_path().suffix + ".lock")
+        handle = open(lock_path, "a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise RuntimeError("The MTProto session is already in use by another local Anya process.") from exc
+        self._session_lock_handle = handle
+
+    def _release_session_lock(self) -> None:
+        handle, self._session_lock_handle = self._session_lock_handle, None
+        if handle is None:
+            return
+        try:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            pass
+        handle.close()
+
+    @staticmethod
+    def _is_connected(client) -> bool:
+        value = getattr(client, "is_connected", None)
+        if callable(value):
+            value = value()
+        if value is not None:
+            return bool(value)
+        return bool(getattr(client, "connected", False))
 
     def _secure_session_path(self) -> Path:
         path = self.settings.session_path
@@ -109,9 +150,24 @@ class MTProtoTransport(TelegramTransport):
         return TelegramClient(str(path), api_id, api_hash)
 
     async def connect(self):
-        if self.client is None: self.client = self._make_client()
-        await self.client.connect()
-        return self.client
+        # Telethon's connect is not safe to race with another connect on the
+        # same client/session. Re-use a live client and serialize creation and
+        # reconnect attempts within this process.
+        async with self._connect_lock:
+            if self.client is None:
+                self._acquire_session_lock()
+                try:
+                    self.client = self._make_client()
+                except Exception:
+                    self._release_session_lock()
+                    raise
+            if not self._is_connected(self.client):
+                try:
+                    await self.client.connect()
+                except Exception:
+                    log.warning("mtproto_connect_failed", exc_info=True)
+                    raise
+            return self.client
 
     async def status(self) -> dict[str, Any]:
         client = await self.connect()
@@ -129,8 +185,29 @@ class MTProtoTransport(TelegramTransport):
             self._account_id = int((await client.get_me()).id)
         return self._account_id
 
+    @staticmethod
+    def _inbound_kind(message):
+        """Classify only Telegram metadata; do not fetch untrusted binaries."""
+        from app.telegram.transport import InboundKind
+        document = getattr(message, "document", None)
+        if getattr(message, "sticker", False) and document:
+            return InboundKind.sticker
+        if getattr(message, "photo", None):
+            return InboundKind.photo
+        if getattr(message, "voice", None):
+            return InboundKind.voice
+        if getattr(message, "audio", None):
+            return InboundKind.audio
+        if getattr(message, "video", None):
+            return InboundKind.video
+        if getattr(message, "gif", None):
+            return InboundKind.animation
+        if document:
+            return InboundKind.document
+        return InboundKind.text
+
     async def run_private_inbound(self, on_event, on_message_read=None) -> None:
-        """Run only allowlisted incoming private text/sticker events until disconnected."""
+        """Run allowlisted private inbound metadata until disconnected."""
         self.settings.require_live_runtime()
         client = await self.connect()
         if not await client.is_user_authorized():
@@ -176,23 +253,30 @@ class MTProtoTransport(TelegramTransport):
             message = raw_event.message
             text = (getattr(raw_event, "raw_text", "") or "").strip()
             document = getattr(message, "document", None)
-            is_sticker = bool(getattr(message, "sticker", False) and document)
-            if not text and not is_sticker:
+            kind = self._inbound_kind(message)
+            if not text and kind.value == "text":
                 return
             reply_to = getattr(getattr(message, "reply_to", None), "reply_to_msg_id", None)
             from app.telegram.transport import InboundKind, NormalizedInboundEvent
-            emoji = next((getattr(attr, "alt", None) for attr in getattr(document, "attributes", []) if getattr(attr, "alt", None)), None) if is_sticker else None
+            emoji = next((getattr(attr, "alt", None) for attr in getattr(document, "attributes", []) if getattr(attr, "alt", None)), None) if kind == InboundKind.sticker else None
             event = NormalizedInboundEvent(
                 transport=self.name,
                 account_id=account_id,
                 peer_id=int(peer_id),
                 sender_id=int(sender_id),
                 message_id=int(raw_event.id),
-                kind=InboundKind.sticker if is_sticker else InboundKind.text,
+                kind=kind,
                 occurred_at=getattr(message, "date", None) or datetime.now(timezone.utc),
                 text=text,
                 reply_to_message_id=reply_to,
-                media={"document": document, "emoji": emoji} if is_sticker else {},
+                # Store only the small protocol reference required for a
+                # sticker re-send. Other inbound media stays metadata-only
+                # until a bounded, transport-neutral analyzer is introduced.
+                media={"document": document, "emoji": emoji} if kind == InboundKind.sticker else {
+                    "grouped_id": getattr(message, "grouped_id", None),
+                    "mime_type": getattr(getattr(message, "file", None), "mime_type", None),
+                },
+                grouped_id=getattr(message, "grouped_id", None),
             )
             await on_event(event, getattr(sender, "username", None))
 
@@ -247,10 +331,13 @@ class MTProtoTransport(TelegramTransport):
         )
 
     async def close(self) -> None:
-        if self.client:
-            try:
-                await self.client.disconnect()
-            except asyncio.CancelledError:
-                # Interactive Ctrl+C may cancel cleanup too; the process is
-                # already exiting and no session/auth data is lost here.
-                pass
+        async with self._connect_lock:
+            if self.client:
+                try:
+                    await self.client.disconnect()
+                except asyncio.CancelledError:
+                    # Interactive Ctrl+C may cancel cleanup too; the process is
+                    # already exiting and no session/auth data is lost here.
+                    pass
+                finally:
+                    self._release_session_lock()

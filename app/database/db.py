@@ -1,6 +1,8 @@
 import asyncio
+import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import timezone
 from pathlib import Path
 
 MIGRATIONS = [
@@ -507,6 +509,149 @@ MIGRATIONS = [
     );
     CREATE INDEX IF NOT EXISTS idx_action_dispatches_chat ON action_dispatches(transport,chat_id,created_at);
     """,
+    """
+    -- A durable dispatch has three materially different pre-terminal states:
+    -- `execution_state=not_started` is safe to reclaim; `executing` may have
+    -- reached Telegram and must never be replayed after a crash. `status`
+    -- stays backward-compatible with the original SQLite CHECK constraint.
+    -- `recovery_status=unknown` makes that latter case visible for manual or
+    -- future provider-specific reconciliation without weakening at-most-once.
+    ALTER TABLE action_dispatches ADD COLUMN recovery_status TEXT NOT NULL DEFAULT 'none'
+      CHECK(recovery_status IN ('none','unknown'));
+    ALTER TABLE action_dispatches ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'not_started'
+      CHECK(execution_state IN ('not_started','executing'));
+    ALTER TABLE action_dispatches ADD COLUMN started_at TEXT;
+    ALTER TABLE action_dispatches ADD COLUMN detail TEXT;
+    CREATE INDEX IF NOT EXISTS idx_action_dispatches_recovery
+      ON action_dispatches(transport,status,recovery_status,updated_at);
+    """,
+    """
+    -- Read acknowledgement retries are intentionally observable and bounded
+    -- per burst. A later low-frequency retry still allows recovery after a
+    -- transient Telegram watermark outage without pretending it succeeded.
+    ALTER TABLE scheduled_reads ADD COLUMN read_confirmation_attempts INTEGER NOT NULL DEFAULT 0;
+    """,
+    """
+    -- Stable Telegram identity registry. `local_chat_id` deliberately remains
+    -- a compatibility bridge for existing messages/turns, not the identity
+    -- itself: account, peer and optional topic are always stored separately.
+    CREATE TABLE IF NOT EXISTS telegram_accounts (
+      transport TEXT NOT NULL, account_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(transport,account_id)
+    );
+    CREATE TABLE IF NOT EXISTS telegram_peers (
+      transport TEXT NOT NULL, account_id INTEGER NOT NULL,
+      peer_type TEXT NOT NULL CHECK(peer_type IN ('user','group','supergroup','channel')),
+      peer_id INTEGER NOT NULL, title TEXT, username TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(transport,account_id,peer_type,peer_id),
+      FOREIGN KEY(transport,account_id) REFERENCES telegram_accounts(transport,account_id)
+    );
+    CREATE TABLE IF NOT EXISTS telegram_contact_identities (
+      transport TEXT NOT NULL, account_id INTEGER NOT NULL, telegram_user_id INTEGER NOT NULL,
+      local_contact_user_id INTEGER NOT NULL REFERENCES anya_contacts(telegram_user_id),
+      username TEXT, display_name TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(transport,account_id,telegram_user_id),
+      FOREIGN KEY(transport,account_id) REFERENCES telegram_accounts(transport,account_id)
+    );
+    CREATE TABLE IF NOT EXISTS telegram_conversations (
+      transport TEXT NOT NULL, account_id INTEGER NOT NULL,
+      peer_type TEXT NOT NULL CHECK(peer_type IN ('user','group','supergroup','channel')),
+      peer_id INTEGER NOT NULL, thread_id INTEGER NOT NULL DEFAULT 0,
+      local_chat_id INTEGER NOT NULL UNIQUE,
+      participation_policy TEXT NOT NULL DEFAULT 'OFF' CHECK(participation_policy IN ('OFF','OBSERVE_ONLY','MENTIONS_ONLY','PARTICIPATE')),
+      consent_granted INTEGER NOT NULL DEFAULT 0 CHECK(consent_granted IN (0,1)),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(transport,account_id,peer_type,peer_id,thread_id),
+      FOREIGN KEY(transport,account_id,peer_type,peer_id) REFERENCES telegram_peers(transport,account_id,peer_type,peer_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_contact_identities_local ON telegram_contact_identities(local_contact_user_id);
+    CREATE INDEX IF NOT EXISTS idx_telegram_conversations_peer ON telegram_conversations(transport,account_id,peer_type,peer_id);
+    """,
+    """
+    -- Outbound message mutations remain in the local history so an edited or
+    -- deleted remote message cannot be accidentally targeted again.  Deleted
+    -- rows are excluded from conversational context instead of being erased,
+    -- preserving delivery auditability without resurfacing their text.
+    ALTER TABLE messages ADD COLUMN deleted_at TEXT;
+    """,
+    """
+    -- Consent-gated social observations. This is deliberately independent of
+    -- chats, contacts and beliefs: a source can provide experience without
+    -- gaining the ability to mutate Anya's personality.
+    CREATE TABLE IF NOT EXISTS social_sources (
+      id INTEGER PRIMARY KEY,
+      platform TEXT NOT NULL,
+      platform_account_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      display_name TEXT,
+      usage_mode TEXT NOT NULL,
+      ai_processing_allowed INTEGER NOT NULL CHECK(ai_processing_allowed IN (0,1)),
+      memory_allowed INTEGER NOT NULL CHECK(memory_allowed IN (0,1)),
+      retention_allowed INTEGER NOT NULL CHECK(retention_allowed IN (0,1)),
+      explicit_consent INTEGER NOT NULL CHECK(explicit_consent IN (0,1)),
+      consent_scope TEXT,
+      permission_expires_at TEXT,
+      capabilities_json TEXT NOT NULL DEFAULT '[]',
+      cursor_value TEXT,
+      status TEXT NOT NULL DEFAULT 'enabled' CHECK(status IN ('enabled','disabled','revoked')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(platform,platform_account_id,source_id)
+    );
+    CREATE TABLE IF NOT EXISTS social_events (
+      id INTEGER PRIMARY KEY,
+      source_row_id INTEGER NOT NULL REFERENCES social_sources(id),
+      event_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      actor_id TEXT,
+      thread_id TEXT,
+      event_kind TEXT NOT NULL,
+      content_ref TEXT,
+      content_hash TEXT,
+      content_excerpt TEXT,
+      media_metadata_json TEXT NOT NULL DEFAULT '{}',
+      reply_to_event_id TEXT,
+      reference_event_ids_json TEXT NOT NULL DEFAULT '[]',
+      visibility TEXT NOT NULL,
+      permissions_json TEXT NOT NULL,
+      provenance_json TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('accepted','rejected','deleted','restored')),
+      rejection_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_row_id,event_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_events_source_time ON social_events(source_row_id,occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_social_events_status ON social_events(status,received_at DESC);
+    """,
+    """
+    -- Memory routing for accepted social observations. This is intentionally
+    -- separate from existing private-chat `memories` and `episodic_memories`
+    -- until context/privacy routing is completed in a later stage.
+    CREATE TABLE IF NOT EXISTS social_memories (
+      id INTEGER PRIMARY KEY,
+      social_event_id INTEGER NOT NULL REFERENCES social_events(id),
+      tier TEXT NOT NULL CHECK(tier IN ('working','episodic','social')),
+      actor_id TEXT,
+      summary TEXT,
+      importance REAL NOT NULL CHECK(importance >= 0 AND importance <= 1),
+      emotional_significance REAL NOT NULL CHECK(emotional_significance >= 0 AND emotional_significance <= 1),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      expires_at TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','expired','deleted')),
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(social_event_id,tier)
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_memories_active ON social_memories(status,tier,expires_at);
+    """,
 ]
 
 
@@ -580,6 +725,173 @@ class Database:
             return ExecuteResult(cursor.lastrowid, cursor.rowcount)
         return await self._run(run)
 
+    async def upsert_social_source(self, source, *, capabilities) -> tuple[int, str | None]:
+        """Persist a source permission snapshot without storing credentials."""
+        permission = source.permission
+        await self.execute(
+            "INSERT INTO social_sources(platform,platform_account_id,source_id,source_type,display_name,usage_mode,"
+            "ai_processing_allowed,memory_allowed,retention_allowed,explicit_consent,consent_scope,permission_expires_at,capabilities_json) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(platform,platform_account_id,source_id) DO UPDATE SET "
+            "source_type=excluded.source_type,display_name=excluded.display_name,usage_mode=excluded.usage_mode,"
+            "ai_processing_allowed=excluded.ai_processing_allowed,memory_allowed=excluded.memory_allowed,"
+            "retention_allowed=excluded.retention_allowed,explicit_consent=excluded.explicit_consent,"
+            "consent_scope=excluded.consent_scope,permission_expires_at=excluded.permission_expires_at,"
+            "capabilities_json=excluded.capabilities_json,updated_at=CURRENT_TIMESTAMP",
+            (
+                source.platform, source.platform_account_id, source.source_id, source.source_type,
+                source.display_name, permission.usage_mode, int(permission.ai_processing_allowed),
+                int(permission.memory_allowed), int(permission.retention_allowed), int(permission.explicit_consent),
+                permission.consent_scope,
+                permission.expires_at.astimezone(timezone.utc).isoformat() if permission.expires_at else None,
+                json.dumps(sorted(capabilities)),
+            ),
+        )
+        row = await self.fetchone(
+            "SELECT id,cursor_value FROM social_sources WHERE platform=? AND platform_account_id=? AND source_id=?",
+            (source.platform, source.platform_account_id, source.source_id),
+        )
+        return int(row["id"]), row["cursor_value"]
+
+    async def update_social_source_cursor(self, source_row_id: int, cursor: str | None) -> None:
+        await self.execute(
+            "UPDATE social_sources SET cursor_value=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (cursor, source_row_id),
+        )
+
+    async def record_social_event(
+        self, *, source_row_id: int, event, status: str, rejection_reason: str | None,
+        content_hash: str | None, content_excerpt: str | None,
+    ) -> bool:
+        permission = event.source.permission
+        result = await self.execute(
+            "INSERT INTO social_events(source_row_id,event_id,idempotency_key,actor_id,thread_id,event_kind,content_ref,"
+            "content_hash,content_excerpt,media_metadata_json,reply_to_event_id,reference_event_ids_json,visibility,"
+            "permissions_json,provenance_json,occurred_at,received_at,status,rejection_reason) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
+            (
+                source_row_id, event.event_id, event.idempotency_key, event.actor_id, event.thread_id,
+                event.event_kind, event.content_ref, content_hash, content_excerpt,
+                json.dumps(event.media_metadata, sort_keys=True), event.reply_to_event_id,
+                json.dumps(event.reference_event_ids), event.visibility,
+                json.dumps({
+                    "usage_mode": permission.usage_mode,
+                    "ai_processing_allowed": permission.ai_processing_allowed,
+                    "memory_allowed": permission.memory_allowed,
+                    "retention_allowed": permission.retention_allowed,
+                    "explicit_consent": permission.explicit_consent,
+                    "consent_scope": permission.consent_scope,
+                }, sort_keys=True),
+                json.dumps(event.provenance, sort_keys=True),
+                event.occurred_at.astimezone(timezone.utc).isoformat(),
+                event.received_at.astimezone(timezone.utc).isoformat(), status, rejection_reason,
+            ),
+        )
+        return result.rowcount == 1
+
+    async def delete_social_event_content(self, source_row_id: int, event_ids: tuple[str, ...]) -> int:
+        """Honor deletion/revocation without deleting the minimal audit record."""
+        if not event_ids:
+            return 0
+        placeholders = ",".join("?" for _ in event_ids)
+        result = await self.execute(
+            f"UPDATE social_events SET status='deleted',content_ref=NULL,content_hash=NULL,content_excerpt=NULL,"
+            f"updated_at=CURRENT_TIMESTAMP WHERE source_row_id=? AND event_id IN ({placeholders}) "
+            "AND status IN ('accepted','restored')",
+            (source_row_id, *event_ids),
+        )
+        if result.rowcount:
+            await self.execute(
+                f"UPDATE social_memories SET status='deleted',summary=NULL,updated_at=CURRENT_TIMESTAMP "
+                f"WHERE social_event_id IN (SELECT id FROM social_events WHERE source_row_id=? AND event_id IN ({placeholders})) "
+                "AND status='active'",
+                (source_row_id, *event_ids),
+            )
+        return result.rowcount
+
+    async def update_social_event_content(
+        self,
+        source_row_id: int,
+        event_ids: tuple[str, ...],
+        *,
+        content_ref: str | None,
+        content_hash: str | None,
+        content_excerpt: str | None,
+        restoring: bool = False,
+    ) -> int:
+        """Apply a permitted edit/restore while keeping both events auditable.
+
+        A restore must bring a fresh, permitted representation of the content;
+        deleted memory rows intentionally remain deleted. The restore observation
+        may form new memory through the normal router instead.
+        """
+        if not event_ids:
+            return 0
+        placeholders = ",".join("?" for _ in event_ids)
+        source_statuses = "('deleted')" if restoring else "('accepted','restored')"
+        target_status = "restored" if restoring else "accepted"
+        result = await self.execute(
+            f"UPDATE social_events SET status=?,content_ref=?,content_hash=?,content_excerpt=?,"
+            f"updated_at=CURRENT_TIMESTAMP WHERE source_row_id=? AND event_id IN ({placeholders}) "
+            f"AND status IN {source_statuses}",
+            (target_status, content_ref, content_hash, content_excerpt, source_row_id, *event_ids),
+        )
+        if result.rowcount:
+            await self.execute(
+                f"UPDATE social_memories SET summary=?,updated_at=CURRENT_TIMESTAMP "
+                f"WHERE social_event_id IN (SELECT id FROM social_events WHERE source_row_id=? "
+                f"AND event_id IN ({placeholders})) AND status='active'",
+                (content_excerpt, source_row_id, *event_ids),
+            )
+        return result.rowcount
+
+    async def social_event_id(self, source_row_id: int, event_id: str) -> int | None:
+        row = await self.fetchone(
+            "SELECT id FROM social_events WHERE source_row_id=? AND event_id=?",
+            (source_row_id, event_id),
+        )
+        return int(row["id"]) if row else None
+
+    async def record_social_memory(
+        self, *, social_event_id: int, tier: str, actor_id: str | None, summary: str | None,
+        importance: float, emotional_significance: float, confidence: float,
+        expires_at: str | None, provenance: dict,
+    ) -> bool:
+        result = await self.execute(
+            "INSERT INTO social_memories(social_event_id,tier,actor_id,summary,importance,emotional_significance,confidence,expires_at,provenance_json) "
+            "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(social_event_id,tier) DO NOTHING",
+            (social_event_id, tier, actor_id, summary, importance, emotional_significance,
+             confidence, expires_at, json.dumps(provenance, sort_keys=True)),
+        )
+        return result.rowcount == 1
+
+    async def expire_social_memories(self, now_iso: str) -> int:
+        result = await self.execute(
+            "UPDATE social_memories SET status='expired',updated_at=CURRENT_TIMESTAMP "
+            "WHERE status='active' AND expires_at IS NOT NULL AND expires_at<?",
+            (now_iso,),
+        )
+        return result.rowcount
+
+    async def active_social_memories_for_scope(self, consent_scope: str, now_iso: str):
+        """Read only the external memories explicitly permitted for one chat."""
+        return await self.fetchall(
+            "SELECT m.id,m.tier,m.actor_id,m.summary,m.importance,m.emotional_significance,m.confidence,"
+            "e.id AS social_event_id,"
+            "m.created_at,e.occurred_at,s.platform,s.source_type "
+            "FROM social_memories m "
+            "JOIN social_events e ON e.id=m.social_event_id "
+            "JOIN social_sources s ON s.id=e.source_row_id "
+            "WHERE m.status='active' AND m.summary IS NOT NULL "
+            "AND e.status IN ('accepted','restored') AND s.status='enabled' "
+            "AND s.ai_processing_allowed=1 AND s.memory_allowed=1 "
+            "AND s.consent_scope=? "
+            "AND (s.permission_expires_at IS NULL OR s.permission_expires_at>=?) "
+            "ORDER BY CASE m.tier WHEN 'episodic' THEN 0 WHEN 'working' THEN 1 ELSE 2 END, "
+            "(m.importance + m.emotional_significance) DESC, e.occurred_at DESC, m.id DESC LIMIT 200",
+            (consent_scope, now_iso),
+        )
+
     async def fetchall(self, sql, values=()):
         return await self._run(lambda: self.conn.execute(sql, values).fetchall())
 
@@ -642,6 +954,42 @@ class Database:
             "VALUES(?,?,?,?,?,'claimed') ON CONFLICT(transport,generation_id,action_index) DO NOTHING",
             (transport, generation_id, action_index, chat_id, action_type),
         )
+        if result.rowcount == 1:
+            return True
+        # `claimed` is deliberately before the executor starts. It is safe to
+        # re-enqueue after a process dies while a slot is only sitting in the
+        # in-memory queue. The compare-and-swap in start_action_dispatch still
+        # ensures only one concurrent process can enter the executor.
+        reclaimed = await self.execute(
+            "UPDATE action_dispatches SET updated_at=CURRENT_TIMESTAMP,detail=NULL "
+            "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed' "
+            "AND execution_state='not_started' AND recovery_status='none'",
+            (transport, generation_id, action_index),
+        )
+        return reclaimed.rowcount == 1
+
+    async def start_action_dispatch(
+        self, *, transport: str, generation_id: str, action_index: int,
+    ) -> bool:
+        """Atomically enter the external-call zone for one claimed slot."""
+        result = await self.execute(
+            "UPDATE action_dispatches SET execution_state='executing',started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP "
+            "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed' "
+            "AND execution_state='not_started' AND recovery_status='none'",
+            (transport, generation_id, action_index),
+        )
+        return result.rowcount == 1
+
+    async def cancel_unstarted_action_dispatch(
+        self, *, transport: str, generation_id: str, action_index: int,
+    ) -> bool:
+        """Terminally record an action superseded before its executor started."""
+        result = await self.execute(
+            "UPDATE action_dispatches SET status='failed',detail='cancelled before external dispatch',"
+            "updated_at=CURRENT_TIMESTAMP WHERE transport=? AND generation_id=? AND action_index=? "
+            "AND status='claimed' AND execution_state='not_started' AND recovery_status='none'",
+            (transport, generation_id, action_index),
+        )
         return result.rowcount == 1
 
     async def finish_action_dispatch(
@@ -649,9 +997,30 @@ class Database:
     ) -> None:
         await self.execute(
             "UPDATE action_dispatches SET status=?,updated_at=CURRENT_TIMESTAMP "
-            "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed'",
+            "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed' AND execution_state='executing'",
             ("completed" if success else "failed", transport, generation_id, action_index),
         )
+
+    async def reconcile_action_dispatches(self, *, transport: str) -> dict[str, int]:
+        """Make crash leftovers diagnosable without resending uncertain work.
+
+        A `claimed` row has not passed the executor compare-and-swap and may be
+        reclaimed if the same generation is reconstructed. An `executing` row
+        could have sent successfully just before the process died, so it is
+        terminally marked unknown and is intentionally never auto-retried.
+        """
+        unknown = await self.execute(
+            "UPDATE action_dispatches SET status='failed',recovery_status='unknown',"
+            "detail='process stopped during external dispatch',updated_at=CURRENT_TIMESTAMP "
+            "WHERE transport=? AND status='claimed' AND execution_state='executing' AND recovery_status='none'",
+            (transport,),
+        )
+        claimed = await self.fetchone(
+            "SELECT COUNT(*) AS count FROM action_dispatches WHERE transport=? AND status='claimed' "
+            "AND execution_state='not_started' AND recovery_status='none'",
+            (transport,),
+        )
+        return {"unknown": unknown.rowcount, "reclaimable_claims": int(claimed["count"] if claimed else 0)}
 
     async def transition_telegram_messages(
         self, *, local_chat_id: int, message_ids: list[int], status: str,
@@ -699,7 +1068,10 @@ class Database:
             "AND peer_type='user' AND peer_id=? AND direction='incoming' AND message_id<=?",
             (account_id, peer_id, max_message_id),
         )
-        forward = {"received", "scheduled_read", "read_ack_requested"}
+        # A server update can arrive after the request callback has parked the
+        # durable read job in `read_ack_waiting`. That is still a forward
+        # transition, never an observational no-op.
+        forward = {"received", "scheduled_read", "read_ack_requested", "read_ack_waiting"}
         for row in rows:
             next_status = "read_ack_confirmed" if row["status"] in forward else row["status"]
             await self.execute(
@@ -711,6 +1083,58 @@ class Database:
                 (row["id"], "read_ack_confirmed", source, max_message_id),
             )
         return len(rows)
+
+    async def mark_mtproto_read_confirmation_pending(
+        self, *, local_chat_id: int, message_ids: list[int], read_watermark: int | None,
+        source: str,
+    ) -> int:
+        """Park an unconfirmed receipt without regressing a raced confirmation.
+
+        `MessageRead` updates are concurrent with the RPC result path.  A
+        blind state update here could turn an already-confirmed receipt back
+        into `read_ack_waiting`, which in turn causes pointless retries and a
+        misleading monitor state.
+        """
+        if not message_ids:
+            return 0
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = await self.fetchall(
+            f"SELECT id,message_id,status,read_watermark FROM telegram_message_states "
+            f"WHERE local_chat_id=? AND direction='incoming' AND message_id IN ({placeholders})",
+            (local_chat_id, *message_ids),
+        )
+        updated = 0
+        for row in rows:
+            confirmed = row["read_watermark"] is not None and row["read_watermark"] >= row["message_id"]
+            if confirmed:
+                continue
+            result = await self.execute(
+                "UPDATE telegram_message_states SET status='read_ack_waiting',"
+                "read_watermark=COALESCE(?,read_watermark),updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND status IN ('received','scheduled_read','read_ack_requested','read_ack_waiting') "
+                "AND (read_watermark IS NULL OR read_watermark < message_id)",
+                (read_watermark, row["id"]),
+            )
+            if result.rowcount:
+                updated += 1
+                await self.execute(
+                    "INSERT OR IGNORE INTO telegram_message_state_events(state_id,status,source,read_watermark) VALUES(?,?,?,?)",
+                    (row["id"], "read_ack_waiting", source, read_watermark if read_watermark is not None else -1),
+                )
+        return updated
+
+    async def mtproto_inbox_read_confirmed(self, *, local_chat_id: int, message_ids: list[int]) -> bool:
+        """Whether Telegram has confirmed every requested incoming message."""
+        if not message_ids:
+            return False
+        placeholders = ",".join("?" for _ in message_ids)
+        row = await self.fetchone(
+            f"SELECT COUNT(*) AS count FROM telegram_message_states "
+            f"WHERE local_chat_id=? AND direction='incoming' AND message_id IN ({placeholders}) "
+            "AND read_watermark IS NOT NULL AND read_watermark >= message_id",
+            (local_chat_id, *message_ids),
+        )
+        return bool(row and row["count"] == len(message_ids))
 
     async def record_mtproto_outbox_read_watermark(
         self, *, account_id: int, peer_id: int, max_message_id: int, source: str,
@@ -790,7 +1214,7 @@ class Database:
         excluded = " AND (m.conversation_turn_id IS NULL OR m.conversation_turn_id != ?)" if exclude_turn_id is not None else ""
         values = ((f"-{recent_media_hours} hours", chat_id, exclude_turn_id, limit)
                   if exclude_turn_id is not None else (f"-{recent_media_hours} hours", chat_id, limit))
-        rows = await self.fetchall("SELECT m.sender,m.text,m.type,m.timestamp,ss.visual_description AS sticker_visual,ss.meanings_json AS sticker_meanings,CASE WHEN m.timestamp >= datetime('now', ?) THEN md.description END AS photo_description FROM messages m LEFT JOIN stickers s ON s.file_id=m.sticker_file_id LEFT JOIN sticker_semantics ss ON ss.sticker_id=s.id LEFT JOIN message_media mm ON mm.chat_id=m.chat_id AND mm.telegram_message_id=m.telegram_message_id LEFT JOIN media_descriptions md ON md.media_id=mm.media_id WHERE m.chat_id=?" + excluded + " ORDER BY m.id DESC LIMIT ?", values)
+        rows = await self.fetchall("SELECT m.sender,m.text,m.type,m.timestamp,ss.visual_description AS sticker_visual,ss.meanings_json AS sticker_meanings,CASE WHEN m.timestamp >= datetime('now', ?) THEN md.description END AS photo_description FROM messages m LEFT JOIN stickers s ON s.file_id=m.sticker_file_id LEFT JOIN sticker_semantics ss ON ss.sticker_id=s.id LEFT JOIN message_media mm ON mm.chat_id=m.chat_id AND mm.telegram_message_id=m.telegram_message_id LEFT JOIN media_descriptions md ON md.media_id=mm.media_id WHERE m.chat_id=? AND m.deleted_at IS NULL" + excluded + " ORDER BY m.id DESC LIMIT ?", values)
         return list(reversed(rows))
 
     async def record_reaction(self, *, chat_id: int, telegram_message_id: int, actor: str, emoji: str, actor_user_id: int | None = None, active: bool = True):
@@ -819,7 +1243,28 @@ class Database:
         return (user["user_id"] if user else None, "\n".join(row["text"] or "[sticker]" for row in rows))
 
     async def known_user_message(self, chat_id: int, message_id: int) -> bool:
-        return bool(await self.fetchone("SELECT 1 FROM messages WHERE chat_id=? AND telegram_message_id=? AND sender='user'", (chat_id, message_id)))
+        return bool(await self.fetchone("SELECT 1 FROM messages WHERE chat_id=? AND telegram_message_id=? AND sender='user' AND deleted_at IS NULL", (chat_id, message_id)))
+
+    async def known_assistant_message(self, chat_id: int, message_id: int) -> bool:
+        """Only an extant message sent by Anya is a valid edit/delete target."""
+        return bool(await self.fetchone(
+            "SELECT 1 FROM messages WHERE chat_id=? AND telegram_message_id=? AND sender='assistant' AND deleted_at IS NULL",
+            (chat_id, message_id),
+        ))
+
+    async def update_assistant_message(self, chat_id: int, message_id: int, text: str) -> bool:
+        result = await self.execute(
+            "UPDATE messages SET text=? WHERE chat_id=? AND telegram_message_id=? AND sender='assistant' AND deleted_at IS NULL",
+            (text, chat_id, message_id),
+        )
+        return result.rowcount == 1
+
+    async def mark_assistant_message_deleted(self, chat_id: int, message_id: int) -> bool:
+        result = await self.execute(
+            "UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE chat_id=? AND telegram_message_id=? AND sender='assistant' AND deleted_at IS NULL",
+            (chat_id, message_id),
+        )
+        return result.rowcount == 1
 
     async def chat_response_signals(self, chat_id: int):
         row = await self.fetchone("SELECT (julianday('now') - julianday(MAX(timestamp))) * 86400 AS seconds_since_last, SUM(CASE WHEN sender='user' THEN 1 ELSE 0 END) AS user_messages FROM messages WHERE chat_id=?", (chat_id,))

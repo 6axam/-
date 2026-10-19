@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ActionType(str, Enum):
-    text = "text"; sticker = "sticker"; reaction = "reaction"; image = "image"; voice_message = "voice_message"; pause = "pause"; silence = "silence"
+    text = "text"; sticker = "sticker"; reaction = "reaction"; image = "image"; voice_message = "voice_message"; edit = "edit"; delete = "delete"; pause = "pause"; silence = "silence"
 
 
 class Duration(str, Enum):
@@ -76,6 +76,10 @@ class Action(BaseModel):
             raise ValueError("image action requires image_intent")
         if self.type == ActionType.voice_message and not self.voice_intent:
             raise ValueError("voice_message action requires voice_intent")
+        if self.type == ActionType.edit and (not self.target_message_id or not self.text):
+            raise ValueError("edit action requires target_message_id and text")
+        if self.type == ActionType.delete and not self.target_message_id:
+            raise ValueError("delete action requires target_message_id")
         return self
 
 

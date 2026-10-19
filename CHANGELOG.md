@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.28.0 — Consent-gated social experience and MTProto reliability
+`unreleased` · 2026-10-19
+
+Added offline-first, consent-scoped social observations with bounded memory
+tiers and privacy-filtered context retrieval. Hardened MTProto delivery,
+media markers, identity handling and transport-isolated scheduling without
+adding autonomous outreach or extra model calls.
+
 ## v1.27.0 — MTProto delivery reliability
 `unreleased` · 2026-10-15
 

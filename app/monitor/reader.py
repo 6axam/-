@@ -67,6 +67,12 @@ class MonitorReader:
             "WHERE s.local_chat_id=? ORDER BY s.id DESC,e.id DESC LIMIT 80",
             (self.chat_id,),
         )
+        dispatches = self._all(
+            conn,
+            "SELECT action_type,status,recovery_status,detail,updated_at FROM action_dispatches "
+            "WHERE chat_id=? AND (status='failed' OR recovery_status='unknown') ORDER BY id DESC LIMIT 12",
+            (self.chat_id,),
+        )
         episodes = self._one(conn, "SELECT COUNT(*) active,COALESCE(SUM(unresolved),0) unresolved FROM episodic_memories WHERE chat_id=? AND status='active'", (self.chat_id,))
         relationship = {key: float(bond[key]) for key in ("bond_strength","relational_trust","familiarity","care_investment","rupture_load","relationship_security","love_strength") if bond and key in bond.keys()}
         return {
@@ -77,6 +83,7 @@ class MonitorReader:
             "observation": self._observation(observation), "observations": [self._observation(row) for row in observations],
             "events": [dict(row) for row in events], "episodes": dict(episodes) if episodes else {"active": 0, "unresolved": 0},
             "telegram": [dict(row) for row in telegram],
+            "dispatches": [dict(row) for row in dispatches],
         }
 
     @staticmethod

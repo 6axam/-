@@ -1,8 +1,20 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
 from app.actions.models import Action, ActionType, Duration
 from app.actions.queue import ActionQueue
+
+
+def test_edit_and_delete_actions_require_an_owned_message_target():
+    with pytest.raises(ValidationError, match="edit action requires"):
+        Action(type=ActionType.edit, text="исправила")
+    with pytest.raises(ValidationError, match="delete action requires"):
+        Action(type=ActionType.delete)
+    assert Action(type=ActionType.edit, target_message_id=10, text="исправила").target_message_id == 10
+    assert Action(type=ActionType.delete, target_message_id=10).target_message_id == 10
 
 
 class FakeExecutor:

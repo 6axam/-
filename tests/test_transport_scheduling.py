@@ -1,7 +1,8 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.actions.models import Action, ActionType
+from app.actions.models import Action, ActionType, Duration
 from app.actions.queue import ActionQueue
 from app.conversation.read_scheduler import ReadScheduler, ReadTimingEngine
 from app.conversation.response_scheduler import ResponseScheduler
@@ -139,3 +140,72 @@ async def test_three_mtproto_turns_stay_isolated_and_are_not_resent_after_restar
     assert restarted_executor.sent == []
     assert [row["transport"] for row in await restarted_db.fetchall("SELECT transport FROM action_dispatches ORDER BY id")] == ["mtproto"] * 3
     await restarted_db.close()
+
+
+async def test_dispatch_recovery_reclaims_only_pre_execution_claims_and_marks_crashes_unknown(tmp_path):
+    path = tmp_path / "dispatch-recovery.sqlite"
+    db = Database(f"sqlite:///{path}")
+    await db.connect()
+    # This row never crossed the executor boundary: reconstructing the same
+    # generation may safely claim it again.
+    assert await db.claim_action_dispatch(
+        transport="mtproto", generation_id="queued", action_index=0, chat_id=-1, action_type="text",
+    )
+    # This row may have reached Telegram before a process crash. It must never
+    # be silently repeated.
+    assert await db.claim_action_dispatch(
+        transport="mtproto", generation_id="during-send", action_index=0, chat_id=-2, action_type="text",
+    )
+    assert await db.start_action_dispatch(transport="mtproto", generation_id="during-send", action_index=0)
+    await db.close()
+
+    restarted = Database(f"sqlite:///{path}")
+    await restarted.connect()
+    assert await restarted.reconcile_action_dispatches(transport="mtproto") == {
+        "unknown": 1, "reclaimable_claims": 1,
+    }
+    executor = _DurableExecutor(restarted)
+    queue = ActionQueue(executor, transport="mtproto")
+    await queue.enqueue_many(-1, "queued", [Action(type=ActionType.text, text="safe")])
+    await queue.enqueue_many(-2, "during-send", [Action(type=ActionType.text, text="unsafe")])
+    await queue._queues[-1].join()
+    await queue._queues[-2].join()
+    assert executor.sent == [(-1, "queued", "safe")]
+    row = await restarted.fetchone(
+        "SELECT status,recovery_status,detail FROM action_dispatches WHERE generation_id='during-send'",
+    )
+    assert tuple(row) == ("failed", "unknown", "process stopped during external dispatch")
+    await restarted.close()
+
+
+async def test_cancelled_generation_marks_unstarted_durable_action_terminal(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'cancelled-dispatch.sqlite'}")
+    await db.connect()
+
+    class Executor:
+        def __init__(self): self.db = db; self.started = asyncio.Event(); self.release = asyncio.Event(); self.sent = []
+        async def execute(self, item):
+            if item.action.type == ActionType.pause:
+                self.started.set()
+                await self.release.wait()
+            else:
+                self.sent.append(item.action.text)
+
+    executor = Executor()
+    queue = ActionQueue(executor, transport="mtproto")
+    await queue.enqueue_many(-42, "superseded", [
+        Action(type=ActionType.pause, duration=Duration.long),
+        Action(type=ActionType.text, text="must not send"),
+    ])
+    await executor.started.wait()
+    queue.cancel_generation("superseded")
+    executor.release.set()
+    await queue._queues[-42].join()
+
+    assert executor.sent == []
+    row = await db.fetchone(
+        "SELECT status,execution_state,detail FROM action_dispatches WHERE generation_id='superseded'",
+    )
+    assert tuple(row) == ("failed", "not_started", "cancelled before external dispatch")
+    assert await db.reconcile_action_dispatches(transport="mtproto") == {"unknown": 0, "reclaimable_claims": 0}
+    await db.close()

@@ -15,11 +15,20 @@ async def test_monitor_reader_is_read_only_and_renders_missing_data_safely(tmp_p
         message_id=3, direction="incoming", local_chat_id=7,
         status="read_ack_confirmed", source="test", read_watermark=3,
     )
+    await db.claim_action_dispatch(
+        transport="mtproto", generation_id="g", action_index=0, chat_id=7, action_type="text",
+    )
+    await db.start_action_dispatch(transport="mtproto", generation_id="g", action_index=0)
+    await db.reconcile_action_dispatches(transport="mtproto")
     await db.close()
     reader = MonitorReader(f"sqlite:///{path}", 7)
     data = reader.poll()
     assert data["regulators"] == {"stress": 0.4}
     assert data["telegram"][0]["event_status"] == "read_ack_confirmed"
+    assert data["dispatches"] == [{
+        "action_type": "text", "status": "failed", "recovery_status": "unknown",
+        "detail": "process stopped during external dispatch", "updated_at": data["dispatches"][0]["updated_at"],
+    }]
     connection = reader._connect()
     try:
         try:

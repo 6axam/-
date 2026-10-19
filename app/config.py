@@ -8,8 +8,12 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 class Settings(BaseSettings):
     # Unknown keys in .env are configuration mistakes, not harmless hints.
     model_config = SettingsConfigDict(env_file=".env", extra="forbid")
-    telegram_bot_token: str
-    owner_telegram_id: int
+    # Bot API credentials are not part of the MTProto runtime. Keeping them
+    # optional here lets a separate Anya account run without an unrelated bot
+    # token, while the transport-specific validator below preserves the Bot
+    # API safety contract.
+    telegram_bot_token: str | None = None
+    owner_telegram_id: int | None = None
     telegram_transport: str = "bot_api"
     telegram_api_id: int | None = None
     telegram_api_hash: str | None = None
@@ -152,6 +156,34 @@ class Settings(BaseSettings):
         if value not in {"bot_api", "mtproto"}:
             raise ValueError("TELEGRAM_TRANSPORT must be 'bot_api' or 'mtproto'")
         return value
+
+    @model_validator(mode="after")
+    def valid_telegram_transport_credentials(self):
+        if self.telegram_transport == "bot_api":
+            if not self.telegram_bot_token:
+                raise ValueError("TELEGRAM_BOT_TOKEN is required when TELEGRAM_TRANSPORT=bot_api")
+            if self.owner_telegram_id is None:
+                raise ValueError("OWNER_TELEGRAM_ID is required when TELEGRAM_TRANSPORT=bot_api")
+        return self
+
+    def primary_conversation_chat_id(self) -> int:
+        """Return the read-only UI's single private-chat namespace.
+
+        MTProto stores private conversations under negative logical IDs so
+        their Telegram message IDs can never collide with Bot API history.
+        The monitor/TUI follow that same mapping instead of displaying an
+        empty positive owner chat after a transport switch.
+        """
+        if self.telegram_transport == "bot_api":
+            assert self.owner_telegram_id is not None
+            return self.owner_telegram_id
+        try:
+            allowlist = [int(value.strip()) for value in self.telegram_allowlist.split(",") if value.strip()]
+        except ValueError as exc:
+            raise RuntimeError("TELEGRAM_ALLOWLIST must contain numeric Telegram user IDs for MTProto UI") from exc
+        if len(allowlist) != 1:
+            raise RuntimeError("MTProto monitor/TUI needs exactly one TELEGRAM_ALLOWLIST user ID")
+        return -allowlist[0]
 
     @field_validator("sticker_embedding_provider")
     @classmethod

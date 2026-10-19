@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -8,9 +9,9 @@ from app.telegram.transport import InboundKind, NormalizedInboundEvent
 
 class FakeClient:
     def __init__(self, *, rpc_result=True, watermark=0):
-        self.connected = self.disconnected = False; self.read_calls = []
+        self.connected = self.disconnected = False; self.read_calls = []; self.connect_calls = 0
         self.rpc_result, self.watermark = rpc_result, watermark
-    async def connect(self): self.connected = True
+    async def connect(self): self.connect_calls += 1; self.connected = True
     async def disconnect(self): self.disconnected = True
     async def is_user_authorized(self): return True
     async def get_me(self): return type("Me", (), {"id": 12345678, "first_name": "Anya", "last_name": None})()
@@ -32,8 +33,9 @@ def test_normalized_idempotency_is_scoped_to_transport_account_peer_and_message(
 
 def test_mtproto_capabilities_describe_only_the_live_adapter_actions():
     capabilities = MTProtoTransport.capabilities
-    assert capabilities.reactions and capabilities.read_receipts and capabilities.stickers and capabilities.voice and capabilities.typing
-    assert not capabilities.edit and not capabilities.delete and not capabilities.albums and not capabilities.contact_block
+    assert capabilities.reactions and capabilities.edit and capabilities.delete
+    assert capabilities.read_receipts and capabilities.stickers and capabilities.voice and capabilities.typing
+    assert not capabilities.albums and not capabilities.contact_block
 
 
 async def test_mtproto_status_uses_fake_client_and_redacts_identity(tmp_path):
@@ -45,6 +47,21 @@ async def test_mtproto_status_uses_fake_client_and_redacts_identity(tmp_path):
     assert (tmp_path / "private").stat().st_mode & 0o777 == 0o700
     await transport.close()
     assert fake.disconnected
+
+
+async def test_mtproto_connect_serializes_concurrent_calls_and_reuses_a_live_client(tmp_path):
+    fake = FakeClient()
+    settings = MTProtoSettings(
+        _env_file=None, telegram_api_id=1, telegram_api_hash="secret",
+        telegram_session_path=str(tmp_path / "anya.session"),
+    )
+    transport = MTProtoTransport(settings, client_factory=lambda *_: fake)
+    clients = await asyncio.gather(*(transport.connect() for _ in range(5)))
+    assert clients == [fake] * 5
+    assert fake.connect_calls == 1
+    await transport.connect()
+    assert fake.connect_calls == 1
+    await transport.close()
 
 
 async def test_mtproto_read_receipt_uses_a_resolved_peer_and_confirms_server_watermark(tmp_path):

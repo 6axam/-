@@ -30,6 +30,7 @@ from app.images import DisabledImageGenerationProvider, OpenAIImageProvider, Ope
 from app.memory.extractor import MemoryExtractor
 from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
+from app.social.retrieval import SocialMemoryRetrieval
 from app.self_life import SelfLifeManager
 from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 from app.emotions.engine import EmotionalEngine
@@ -39,6 +40,7 @@ from app.mind import SharedStateManager
 from app.events import EventJournal, EventProcessor
 from app.telegram.mtproto.client import MTProtoSettings, MTProtoTransport
 from app.telegram.mtproto.runtime import MTProtoActionExecutor, MTProtoInboundBridge, MTProtoStickerDocuments, peer_id_for_chat
+from app.telegram.identity import TelegramIdentityRegistry
 
 
 def make_provider(settings, db=None):
@@ -77,8 +79,16 @@ async def main():
         mtproto.settings.require_live_runtime()
     lifecycle = ConversationLifecycleManager(db, s.conversation_cooling_minutes, s.conversation_ended_hours)
     stickers = StickerManager(db, make_embeddings(s), repeat_window_hours=s.sticker_repeat_window_hours, strong_window_minutes=s.sticker_repeat_strong_window_minutes, selection_strategy=s.sticker_selection_strategy)
-    bot = Bot(s.telegram_bot_token); media = MediaManager(db, bot, s.media_cache_dir, s.max_image_bytes)
-    media.cleanup_expired(s.media_cache_max_age_days)
+    # MTProto is a standalone account transport. Do not instantiate a Bot API
+    # client or require its credentials merely because both implementations
+    # share the same Python conversation pipeline.
+    bot = None
+    media = None
+    if not use_mtproto:
+        assert s.telegram_bot_token  # guaranteed by Settings validation
+        bot = Bot(s.telegram_bot_token)
+        media = MediaManager(db, bot, s.media_cache_dir, s.max_image_bytes)
+        media.cleanup_expired(s.media_cache_max_age_days)
     if s.image_generation_enabled and s.image_generation_api_key and s.image_generation_model and s.image_generation_base_url:
         image_cls = OpenRouterImageProvider if s.image_generation_provider == "openrouter" else OpenAIImageProvider
         image_provider = image_cls(s.image_generation_api_key, s.image_generation_model, s.image_generation_base_url)
@@ -100,6 +110,12 @@ async def main():
     else:
         executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider)
     queue = ActionQueue(executor, transport="mtproto" if use_mtproto else "bot_api")
+    recovery = await db.reconcile_action_dispatches(transport=queue.transport)
+    if recovery["unknown"] or recovery["reclaimable_claims"]:
+        logging.getLogger(__name__).warning(
+            "action_dispatch_recovery transport=%s unknown=%s reclaimable_claims=%s",
+            queue.transport, recovery["unknown"], recovery["reclaimable_claims"],
+        )
     provider = make_provider(s, db)
     from app.character.manager import PersonalityManager
     personality, emotional_state = PersonalityManager(db), None
@@ -113,6 +129,7 @@ async def main():
     episodic_memory = EpisodicMemoryManager(db)
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
+    social_memory_retrieval = SocialMemoryRetrieval(db)
     self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
     transport_name = "mtproto" if use_mtproto else "bot_api"
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
@@ -136,7 +153,8 @@ async def main():
                              voice_message_available=voice_provider.enabled, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
                              episodic_memory_token_budget=s.episodic_memory_context_token_budget,
                              episodic_memory_max_items=s.episodic_memory_max_context_items,
-                             shared_state=shared_state)
+                             shared_state=shared_state,
+                             social_memory_retrieval=social_memory_retrieval)
     context.affective_engine = affective_engine
     context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
@@ -148,7 +166,8 @@ async def main():
                                   media=media, presence=presence, memory_extractor=MemoryExtractor(), memory_manager=memory_manager,
                                   self_life=self_life, timezone_name=s.timezone, bedtime_ritual_enabled=s.bedtime_ritual_enabled,
                                   bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
-                                  shared_state=shared_state, event_processor=event_processor)
+                                  shared_state=shared_state, event_processor=event_processor,
+                                  event_source="mtproto" if use_mtproto else "telegram_bot_api")
     manager.affective_engine = affective_engine
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s), transport=transport_name)
 
@@ -195,7 +214,14 @@ async def main():
             elif row["type"] == "photo":
                 parts.append((row["text"] or "[Собеседник отправил изображение]").strip())
             else:
-                parts.append(row["text"] or "")
+                # Older MTProto rows may predate durable media markers. Keep
+                # their meaning on replay instead of collapsing them to an
+                # empty turn after a restart.
+                parts.append(row["text"] or {
+                    "voice": "[голосовое сообщение]", "audio": "[аудио]",
+                    "video": "[видео]", "animation": "[GIF-анимация]",
+                    "document": "[документ]",
+                }.get(row["type"], ""))
         merged = "\n".join(part for part in parts if part) or "[сообщение без текста]"
         user_id = rows[-1]["user_id"]
         # A newer arrival during the tiny claim→dispatch race must receive its
@@ -206,7 +232,7 @@ async def main():
         turn_id = await db.ensure_turn_for_batch(
             user_id=user_id, chat_id=chat_id, merged_text=merged, telegram_message_ids=message_ids,
         )
-        images = list(await media.inputs_for_messages(chat_id, message_ids)) if provider.supports_vision else []
+        images = list(await media.inputs_for_messages(chat_id, message_ids)) if media and provider.supports_vision else []
         if provider.supports_vision:
             for row in rows:
                 message_id = row["telegram_message_id"]
@@ -225,15 +251,31 @@ async def main():
                 logging.getLogger(__name__).warning("mtproto_read_receipt_failed chat_id=%s", chat_id, exc_info=True)
                 return False
             if not acknowledgement.confirmed:
-                logging.getLogger(__name__).info(
-                    "mtproto_read_receipt_waiting_confirmation chat_id=%s boundary_message_id=%s server_watermark=%s",
-                    chat_id, boundary, acknowledgement.server_watermark,
+                await db.mark_mtproto_read_confirmation_pending(
+                    local_chat_id=chat_id, message_ids=message_ids,
+                    read_watermark=acknowledgement.server_watermark,
+                    source="mtproto_read_confirmation_pending",
                 )
-                return False
+                # A MessageRead update may have raced the RPC/watermark query.
+                # The DB is the durable authority for that event, so do not
+                # schedule another read or block the turn once it is present.
+                if not await db.mtproto_inbox_read_confirmed(local_chat_id=chat_id, message_ids=message_ids):
+                    logging.getLogger(__name__).info(
+                        "mtproto_read_receipt_waiting_confirmation chat_id=%s boundary_message_id=%s server_watermark=%s",
+                        chat_id, boundary, acknowledgement.server_watermark,
+                    )
+                    return False
             await db.confirm_mtproto_inbox_watermark(
                 account_id=await mtproto.account_id(), peer_id=peer_id_for_chat(chat_id),
                 max_message_id=max(message_ids), source="mtproto_server_watermark",
             )
+            # `manager.interrupt()` cancels this durable read as soon as a new
+            # inbound message is stored. Acknowledging the old batch may take
+            # a network round-trip, so fence again immediately before an LLM
+            # decision. Otherwise an obsolete response could escape first.
+            if not await read_scheduler.is_current(record):
+                logging.getLogger(__name__).info("mtproto_read_batch_cancelled_before_decision chat_id=%s boundary_message_id=%s", chat_id, boundary)
+                return True
             await db.transition_telegram_messages(
                 local_chat_id=chat_id, message_ids=message_ids,
                 status="decision_pending", source="conversation_start",
@@ -258,14 +300,18 @@ async def main():
                 status="scheduled_read", source="read_scheduler",
             )
     buffer = IncomingBuffer(s.debounce_seconds,flush)
-    mtproto_bridge = MTProtoInboundBridge(db, buffer, manager, lifecycle, stickers, mtproto_stickers) if mtproto else None
+    mtproto_bridge = MTProtoInboundBridge(
+        db, buffer, manager, lifecycle, stickers, mtproto_stickers,
+        identity_registry=TelegramIdentityRegistry(db),
+    ) if mtproto else None
     initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
     manager.initiative_scheduler = initiative
-    worker = StickerAnalysisWorker(db, bot, stickers, provider, s)
+    worker = StickerAnalysisWorker(db, bot, stickers, provider, s) if bot else None
     daily_life = DailyLifeScheduler(db, provider, presence, s)
     photo_worker = MediaDescriptionWorker(db, provider)
     dp = None
     if not use_mtproto:
+        assert bot is not None and media is not None and worker is not None and s.owner_telegram_id is not None
         dp = Dispatcher(); dp.include_router(make_router(db, buffer, manager, s.owner_telegram_id, stickers=stickers, lifecycle=lifecycle, media=media, analysis_worker=worker if s.sticker_analysis_enabled and provider.supports_vision else None, current_analysis_timeout=s.sticker_current_analysis_timeout_seconds))
     try:
         async with asyncio.TaskGroup() as tg:

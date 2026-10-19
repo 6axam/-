@@ -46,7 +46,11 @@ class ActionQueue:
             # an explicit pause between them.
             if previous and previous.type == ActionType.text and action.type == ActionType.text:
                 await self._queues[chat_id].put(QueuedAction(chat_id=chat_id, generation_id=generation_id, action=Action(type=ActionType.pause, duration=Duration.short, text=action.text, cancelable=True, automatic=True)))
-            await self._queues[chat_id].put(QueuedAction(chat_id=chat_id, generation_id=generation_id, action=action, action_index=action_index))
+            # Local control actions deliberately have no durable dispatch row;
+            # passing their list index to the worker made it try (and fail) to
+            # start a non-existent external claim whenever SQLite was enabled.
+            durable_index = action_index if action.type not in {ActionType.pause, ActionType.silence} else None
+            await self._queues[chat_id].put(QueuedAction(chat_id=chat_id, generation_id=generation_id, action=action, action_index=durable_index))
             previous = action
         if chat_id not in self._workers or self._workers[chat_id].done():
             self._workers[chat_id] = asyncio.create_task(self._work(chat_id))
@@ -68,7 +72,25 @@ class ActionQueue:
         while not queue.empty():
             item = await queue.get()
             try:
-                if item.generation_id not in self._cancelled or not item.action.cancelable:
+                if item.generation_id in self._cancelled and item.action.cancelable:
+                    if self.db is not None and item.action_index is not None:
+                        await self.db.cancel_unstarted_action_dispatch(
+                            transport=self.transport, generation_id=item.generation_id,
+                            action_index=item.action_index,
+                        )
+                    continue
+                else:
+                    if self.db is not None and item.action_index is not None:
+                        started = await self.db.start_action_dispatch(
+                            transport=self.transport, generation_id=item.generation_id,
+                            action_index=item.action_index,
+                        )
+                        if not started:
+                            log.warning(
+                                "action_dispatch_not_started transport=%s chat_id=%s generation=%s action_index=%s",
+                                self.transport, chat_id, item.generation_id, item.action_index,
+                            )
+                            continue
                     task = asyncio.create_task(self.executor.execute(item))
                     self._active[chat_id] = (item.generation_id, task, item.action.cancelable)
                     try:
@@ -79,7 +101,15 @@ class ActionQueue:
                                 action_index=item.action_index, success=True,
                             )
                     except asyncio.CancelledError:
-                        pass
+                        # This process observed the cancellation, so this is
+                        # an explicit failed/cancelled attempt rather than an
+                        # ambiguous crash. A process crash leaves `executing`
+                        # behind for reconciliation as `unknown` instead.
+                        if self.db is not None and item.action_index is not None:
+                            await self.db.finish_action_dispatch(
+                                transport=self.transport, generation_id=item.generation_id,
+                                action_index=item.action_index, success=False,
+                            )
                     except Exception:
                         if self.db is not None and item.action_index is not None:
                             await self.db.finish_action_dispatch(

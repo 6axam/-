@@ -146,6 +146,7 @@ def state(data: dict):
 _TELEGRAM_STATE = {
     "received": "получено", "scheduled_read": "ожидает прочтения",
     "read_ack_requested": "прочтение запрошено", "read_ack_confirmed": "прочитано Telegram",
+    "read_ack_waiting": "ожидается подтверждение Telegram",
     "decision_pending": "решение готовится", "response_scheduled": "ответ запланирован",
     "silence": "выбрано молчание", "sent": "отправлено", "recipient_read": "прочитано собеседником",
 }
@@ -153,6 +154,7 @@ _TELEGRAM_STATE = {
 
 def telegram(data: dict):
     rows = data.get("telegram", [])
+    dispatches = data.get("dispatches", [])
     current = {}
     for row in rows:
         key = (row.get("direction"), row.get("message_id"))
@@ -181,4 +183,12 @@ def telegram(data: dict):
         "Watermark подтверждает Telegram. Отметка прочтения исходящего сообщения приходит только от собеседника; monitor её не подменяет.",
         style=MUTED,
     )
-    return Group(Columns([panel("ЦЕПОЧКА ДОСТАВКИ", summary), panel("ПРАВИЛО", notice)], expand=True, equal=True), panel("TELEGRAM · ПОСЛЕДНИЕ ПЕРЕХОДЫ", table if rows else Text("MTProto-статусов пока нет.", style=MUTED)))
+    dispatch_text = "\n".join(
+        f"{row.get('action_type','—')}: {row.get('recovery_status') or row.get('status')} · {row.get('detail') or 'ошибка отправки'}"
+        for row in dispatches
+    )
+    return Group(
+        Columns([panel("ЦЕПОЧКА ДОСТАВКИ", summary), panel("ПРАВИЛО", notice)], expand=True, equal=True),
+        panel("TELEGRAM · ПОСЛЕДНИЕ ПЕРЕХОДЫ", table if rows else Text("MTProto-статусов пока нет.", style=MUTED)),
+        panel("ДЕЙСТВИЯ, ТРЕБУЮЩИЕ ВНИМАНИЯ", Text(dispatch_text, style=MUTED) if dispatch_text else Text("Нет.", style=MUTED)),
+    )

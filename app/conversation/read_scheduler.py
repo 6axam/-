@@ -39,6 +39,9 @@ class ReadTimingEngine:
 
 class ReadScheduler:
     """One durable read claim per batch; a later unread tail gets a new job."""
+    max_confirmation_attempts = 12
+    confirmation_retry_seconds = 5
+    confirmation_backoff_seconds = 60
     def __init__(self, db, presence, timing: ReadTimingEngine, poll_seconds: float = 1.0, now=None, transport: str = "bot_api"):
         self.db, self.presence, self.timing, self.poll_seconds = db, presence, timing, poll_seconds
         self.now = now or (lambda: datetime.now(timezone.utc))
@@ -137,12 +140,21 @@ class ReadScheduler:
                 # waiting for Telegram's authoritative watermark/update. Keep
                 # the same durable job instead of treating a local callback as
                 # confirmation or generating a response prematurely.
+                attempts = int(record["read_confirmation_attempts"] or 0) + 1
+                delay = self.confirmation_retry_seconds if attempts < self.max_confirmation_attempts else self.confirmation_backoff_seconds
+                next_attempts = attempts if attempts < self.max_confirmation_attempts else 0
                 await self.db.execute(
-                    "UPDATE scheduled_reads SET status='pending',read_after=datetime('now','+5 seconds'),updated_at=CURRENT_TIMESTAMP "
+                    "UPDATE scheduled_reads SET status='pending',read_after=datetime('now',?),read_confirmation_attempts=?,updated_at=CURRENT_TIMESTAMP "
                     "WHERE id=? AND transport=? AND status='processing'",
-                    (record["id"], self.transport),
+                    (f"+{delay} seconds", next_attempts, record["id"], self.transport),
                 )
-                log.info("read_confirmation_deferred chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])
+                if attempts >= self.max_confirmation_attempts:
+                    log.warning(
+                        "read_confirmation_retry_window_exhausted chat_id=%s boundary_message_id=%s next_retry_seconds=%s",
+                        record["chat_id"], record["boundary_message_id"], delay,
+                    )
+                else:
+                    log.info("read_confirmation_deferred chat_id=%s boundary_message_id=%s attempt=%s", record["chat_id"], record["boundary_message_id"], attempts)
                 continue
             await self.db.execute("UPDATE scheduled_reads SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=? AND transport=? AND status='processing'", (record["id"], self.transport))
             log.info("read_completed chat_id=%s boundary_message_id=%s", record["chat_id"], record["boundary_message_id"])

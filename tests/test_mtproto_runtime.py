@@ -9,6 +9,7 @@ from app.images import GeneratedImage
 from app.telegram.mtproto.client import MTProtoSettings
 from app.telegram.mtproto.runtime import (
     MTProtoActionExecutor,
+    MTProtoActionUnavailable,
     MTProtoInboundBridge,
     MTProtoStickerDocuments,
     logical_chat_id,
@@ -70,6 +71,30 @@ async def test_mtproto_bridge_uses_separate_logical_chat_and_deduplicates(tmp_pa
     await db.close()
 
 
+async def test_mtproto_bridge_keeps_inbound_media_metadata_bounded_and_uses_caption_or_marker(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'media.sqlite'}")
+    await db.connect()
+    buffer, manager = _Buffer(), _Manager()
+    bridge = MTProtoInboundBridge(db, buffer, manager)
+    photo = NormalizedInboundEvent(
+        transport="mtproto", account_id=99, peer_id=42, sender_id=42,
+        message_id=10, kind=InboundKind.photo, occurred_at=datetime.now(timezone.utc),
+        text="смотри", media={"mime_type": "image/jpeg", "unexpected_binary": b"never stored"},
+    )
+    voice = NormalizedInboundEvent(
+        transport="mtproto", account_id=99, peer_id=42, sender_id=42,
+        message_id=11, kind=InboundKind.voice, occurred_at=datetime.now(timezone.utc),
+    )
+    assert await bridge.receive(photo, "owner")
+    assert await bridge.receive(voice, "owner")
+    rows = await db.fetchall("SELECT type,text FROM messages ORDER BY telegram_message_id")
+    assert [tuple(row) for row in rows] == [("photo", "смотри"), ("voice", "[голосовое сообщение]")]
+    assert [item.text for _, item, _ in buffer.items] == ["смотри", "[голосовое сообщение]"]
+    # The normalized event's media dictionary is never serialised into SQLite.
+    assert await db.fetchone("SELECT 1 FROM media") is None
+    await db.close()
+
+
 def test_mtproto_private_chat_namespace_cannot_mix_with_bot_api_chats():
     assert logical_chat_id(42) == -42
     assert peer_id_for_chat(-42) == 42
@@ -84,6 +109,8 @@ class _Client:
         self.sent = []
         self.files = []
         self.requests = []
+        self.edits = []
+        self.deletes = []
 
     async def get_input_entity(self, peer_id):
         return peer_id
@@ -99,6 +126,12 @@ class _Client:
     async def send_file(self, peer_id, file, **kwargs):
         self.files.append((peer_id, file, kwargs))
         return SimpleNamespace(id=92 + len(self.files))
+
+    async def edit_message(self, peer_id, message_id, text):
+        self.edits.append((peer_id, message_id, text))
+
+    async def delete_messages(self, peer_id, message_ids):
+        self.deletes.append((peer_id, message_ids))
 
 
 class _Transport:
@@ -209,8 +242,31 @@ async def test_mtproto_sticker_without_a_transport_document_is_safely_not_sent(t
     transport = _Transport()
     executor = MTProtoActionExecutor(transport, db, stickers=_Stickers(db), sticker_documents=MTProtoStickerDocuments(db))
 
-    await executor.execute(QueuedAction(chat_id=-42, generation_id="g", action=Action(type=ActionType.sticker, sticker_id=404)))
+    with pytest.raises(MTProtoActionUnavailable, match="no reusable MTProto document"):
+        await executor.execute(QueuedAction(chat_id=-42, generation_id="g", action=Action(type=ActionType.sticker, sticker_id=404)))
 
     assert transport.client.files == []
     assert await db.fetchall("SELECT * FROM messages") == []
+    await db.close()
+
+
+async def test_mtproto_executor_edits_and_deletes_only_its_own_persisted_message(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'mutations.sqlite'}")
+    await db.connect()
+    await db.record_message(chat_id=-42, telegram_message_id=71, sender="assistant", kind="text", text="опечатка")
+    await db.record_message(chat_id=-42, telegram_message_id=72, sender="user", user_id=42, kind="text", text="чужое")
+    transport = _Transport()
+    executor = MTProtoActionExecutor(transport, db)
+
+    await executor.execute(QueuedAction(chat_id=-42, generation_id="edit", action=Action(type=ActionType.edit, target_message_id=71, text="исправлено")))
+    assert transport.client.edits == [(42, 71, "исправлено")]
+    assert (await db.fetchone("SELECT text FROM messages WHERE telegram_message_id=71"))["text"] == "исправлено"
+
+    await executor.execute(QueuedAction(chat_id=-42, generation_id="delete", action=Action(type=ActionType.delete, target_message_id=71)))
+    assert transport.client.deletes == [(42, [71])]
+    assert not await db.known_assistant_message(-42, 71)
+    assert [(row["sender"], row["text"]) for row in await db.recent_messages(-42)] == [("user", "чужое")]
+    with pytest.raises(MTProtoActionUnavailable, match="not an extant assistant message"):
+        await executor.execute(QueuedAction(chat_id=-42, generation_id="bad", action=Action(type=ActionType.delete, target_message_id=72)))
+    assert transport.client.deletes == [(42, [71])]
     await db.close()

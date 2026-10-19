@@ -48,3 +48,53 @@ and autonomous outbound remain disabled in this first live slice.
 possibly 2FA. No code, number, API hash or session should be shared in Codex.
 After the owner completes login, the next permitted step is `status`, then an
 explicitly confirmed Saved Messages smoke test.
+
+## 2026-10-15 — Delivery recovery, connection lifecycle and bounded media intake
+
+- Split a durable external dispatch into `claimed` (not yet entered executor)
+  and an executor-boundary state. On startup, an interrupted external call is
+  stored as `failed` plus `recovery_status=unknown`; it is deliberately not
+  retried. A never-started claim can be re-claimed with a compare-and-swap, so
+  competing workers cannot both send it.
+- Serialized MTProto `connect()` calls, reuses an active client, and uses a
+  local session lock to reject a second process opening the same session.
+- Private inbound intake now normalizes photo, voice, audio, video, GIF and
+  document metadata as well as text/stickers. It does not download, execute or
+  persist arbitrary binaries; captions or clear markers are the fallback.
+- Read watermark confirmation now performs at most 12 fast retries per window,
+  then logs a diagnostic and switches to a 60-second retry. It never treats an
+  unconfirmed read as successful.
+
+| Функция | Реализована | Offline-проверка | Live-проверка | Ограничение |
+| --- | --- | --- | --- | --- |
+| Private text/sticker/media-metadata intake | Да | Да | Нет | Медиа не скачиваются/не транскрибируются автоматически |
+| Text, reaction, sticker, image, voice output | Да | Да | Нет | Edit/delete и альбомы не заявлены capability contract |
+| Read watermark and outbox-read telemetry | Да | Да | Нет | Нужна авторизация владельца для live проверки |
+| Crash-safe action dispatch | Да | Да | Нет | Неопределённый send требует ручного/будущего reconciliation |
+| Bot API fallback | Да | Да (регрессии) | Не выполнялась в этой задаче | Остаётся отдельным transport |
+
+## 2026-10-15 — Stable identity bridge
+
+MTProto private inbound events now persist a composite identity consisting of
+transport, authenticated account, peer type and peer ID before they enter the
+legacy local-chat pipeline. This preserves current conversation history while
+preparing a user to appear as one contact across different permitted contexts.
+Topics and group participation remain disabled pending their explicit policy
+adapter and owner-configured consent.
+# 2026-10-19 — Runtime audit fixes
+
+- Receipt confirmation is now race-safe: an asynchronous Telethon
+  `MessageRead` update can promote a pending receipt, and a delayed callback
+  cannot regress it back to `read_ack_waiting`.
+- The read callback rechecks its durable claim after the MTProto network round
+  trip. A newer inbound message therefore cancels the old batch before it can
+  enter an LLM decision.
+- Voice, audio, video, animation and document events retain compact semantic
+  markers in SQLite across debounce/restart; no media binary is downloaded.
+- MTProto startup no longer creates or requires a Bot API client/token. Bot
+  API credentials remain required in `bot_api` mode only.
+- Read-only TUI and Monitor now resolve the same negative logical chat ID as
+  the MTProto bridge from a single-entry allowlist.
+- ActionQueue no longer tries to start durable dispatches for local
+  pause/silence controls, and cancellation records unstarted external actions
+  terminally instead of leaving recovery noise.

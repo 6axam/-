@@ -7,7 +7,7 @@ log = logging.getLogger(__name__)
 
 class ConversationManager:
     TEST_WAKE_PHRASE = "аня, режим теста"
-    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None, shared_state=None, event_processor=None):
+    def __init__(self, provider, context, queue, personality=None, emotional_state=None, scheduler=None, splitter=None, lifecycle=None, media=None, presence=None, memory_extractor=None, memory_manager=None, self_life=None, timezone_name="Europe/Kyiv", bedtime_ritual_enabled=False, bedtime_window_minutes=20, emotion_engine=None, episodic_memory=None, shared_state=None, event_processor=None, event_source="telegram_bot_api"):
         self.provider,self.context,self.queue = provider,context,queue
         self.personality, self.emotional_state, self.scheduler, self.splitter, self.lifecycle = personality, emotional_state, scheduler, splitter, lifecycle
         self.media = media
@@ -18,6 +18,7 @@ class ConversationManager:
         self.episodic_memory = episodic_memory
         self.shared_state = shared_state
         self.event_processor = event_processor
+        self.event_source = event_source
         self.self_life, self.timezone_name = self_life, timezone_name
         self.bedtime_ritual_enabled, self.bedtime_window_minutes = bedtime_ritual_enabled, bedtime_window_minutes
         self.initiative_scheduler = None
@@ -204,7 +205,7 @@ class ConversationManager:
         if self.event_processor:
             try:
                 record, _, _ = await self.event_processor.ingest(EventEnvelope(
-                    event_type="incoming_conversation_turn", source="telegram_bot_api", actor_kind="contact",
+                    event_type="incoming_conversation_turn", source=self.event_source, actor_kind="contact",
                     actor_id=str(user_id), target_kind="anya", target_id="global", scope="conversation",
                     payload={"chat_id": chat_id, "turn_id": turn_id, "telegram_message_id": target_message_id, "text_chars": len(text)},
                     correlation_id=generation, idempotency_key=f"telegram-turn:{chat_id}:{turn_id if turn_id is not None else generation}",
@@ -413,6 +414,9 @@ class ConversationManager:
                 action.reply_to_message_id = None
             if action.type == ActionType.reaction and not action.target_message_id:
                 log.debug("dropping_reaction_without_target chat_id=%s", chat_id); continue
+            if action.type in {ActionType.edit, ActionType.delete} and not await self.context.db.known_assistant_message(chat_id, action.target_message_id or 0):
+                log.warning("dropping_invalid_assistant_message_target chat_id=%s action=%s target=%s", chat_id, action.type.value, action.target_message_id)
+                continue
             safe.append(action)
         return safe
 

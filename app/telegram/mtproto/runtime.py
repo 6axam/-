@@ -15,6 +15,10 @@ from app.telegram.transport import InboundKind, NormalizedInboundEvent
 log = logging.getLogger(__name__)
 
 
+class MTProtoActionUnavailable(RuntimeError):
+    """Requested action cannot be represented by the configured MTProto runtime."""
+
+
 def logical_chat_id(peer_id: int) -> int:
     """Keep MTProto private histories disjoint from Bot API's positive chat IDs."""
     if peer_id <= 0:
@@ -71,23 +75,51 @@ class MTProtoStickerDocuments:
 
 
 class MTProtoInboundBridge:
-    """Persist a normalized event, then hand it to the existing debounce flow."""
+    """Persist normalized allowlisted metadata, then use the existing debounce flow."""
 
-    def __init__(self, db, buffer, manager, lifecycle=None, stickers=None, sticker_documents=None):
+    media_markers = {
+        InboundKind.sticker: "[стикер]", InboundKind.photo: "[фотография]",
+        InboundKind.voice: "[голосовое сообщение]", InboundKind.audio: "[аудио]",
+        InboundKind.video: "[видео]", InboundKind.animation: "[GIF-анимация]",
+        InboundKind.document: "[документ]",
+    }
+
+    def __init__(self, db, buffer, manager, lifecycle=None, stickers=None, sticker_documents=None, identity_registry=None):
         self.db = db
         self.buffer = buffer
         self.manager = manager
         self.lifecycle = lifecycle
         self.stickers = stickers
         self.sticker_documents = sticker_documents
+        self.identity_registry = identity_registry
 
     async def receive(self, event: NormalizedInboundEvent, username: str | None = None) -> bool:
-        if event.transport != "mtproto" or event.kind not in {InboundKind.text, InboundKind.sticker}:
+        supported = {
+            InboundKind.text, InboundKind.sticker, InboundKind.photo,
+            InboundKind.voice, InboundKind.audio, InboundKind.video,
+            InboundKind.animation, InboundKind.document,
+        }
+        if event.transport != "mtproto" or event.kind not in supported:
             return False
         if not event.sender_id or not event.message_id or not event.peer_id or (event.kind == InboundKind.text and not event.text):
             return False
         chat_id = logical_chat_id(event.peer_id)
         await self.db.ensure_user(event.sender_id, username)
+        if self.identity_registry:
+            from app.telegram.identity import ConversationIdentity
+            identity = ConversationIdentity(
+                transport=event.transport, account_id=event.account_id,
+                peer_type="user", peer_id=event.peer_id,
+            )
+            await self.identity_registry.register_conversation(identity, local_chat_id=chat_id, username=username)
+            shared_state = getattr(self.manager, "shared_state", None)
+            if shared_state:
+                await shared_state.ensure_contact(event.sender_id, chat_id, username=username)
+            await self.identity_registry.register_contact(
+                transport=event.transport, account_id=event.account_id,
+                telegram_user_id=event.sender_id, local_contact_user_id=event.sender_id,
+                username=username, display_name=username,
+            )
         sticker_file_id = None
         if event.kind == InboundKind.sticker:
             document = event.media.get("document")
@@ -109,13 +141,18 @@ class MTProtoInboundBridge:
             sticker_id = await self.stickers.register_incoming(stub, queue_analysis=False)
             await self.sticker_documents.save(sticker_id, document)
             await self.stickers.seen(stub, chat_id)
+        # Keep a compact, bounded semantic marker in the durable message row.
+        # The buffer is transient, whereas the read scheduler reconstructs a
+        # turn from SQLite after debounce/restart. Without this marker, a
+        # voice/video/document silently degraded into "message without text".
+        context_text = event.text or self.media_markers.get(event.kind)
         inserted = await self.db.record_message(
             chat_id=chat_id,
             telegram_message_id=event.message_id,
             user_id=event.sender_id,
             sender="user",
             kind=event.kind.value,
-            text=event.text or None,
+            text=context_text,
             sticker_file_id=sticker_file_id,
             reply_to=event.reply_to_message_id,
         )
@@ -130,7 +167,9 @@ class MTProtoInboundBridge:
         await self.manager.interrupt(chat_id)
         if self.lifecycle:
             await self.lifecycle.on_user_message(chat_id)
-        text = event.text or "[стикер]"
+        # No payload is downloaded or persisted here. The marker remains
+        # useful conversational context when no caption/transcriber is ready.
+        text = context_text or "[сообщение]"
         await self.buffer.add(chat_id, MTProtoBufferedMessage(event.message_id, text, event.sender_id, username))
         return True
 
@@ -260,14 +299,44 @@ class MTProtoActionExecutor:
             await self._image(item)
         elif action.type == ActionType.voice_message:
             await self._voice(item)
+        elif action.type == ActionType.edit:
+            await self._edit(item)
+        elif action.type == ActionType.delete:
+            await self._delete(item)
         else:
-            log.warning("mtproto_action_skipped action_type=%s reason=unsupported", action.type.value)
+            raise MTProtoActionUnavailable(f"unsupported MTProto action: {action.type.value}")
+
+    async def _edit(self, item):
+        action = item.action
+        if not action.target_message_id or not action.text:
+            raise MTProtoActionUnavailable("edit requires target_message_id and text")
+        text = strip_emoji(action.text)
+        if not text.strip():
+            raise MTProtoActionUnavailable("edit text is empty after transport normalization")
+        if not await self.db.known_assistant_message(item.chat_id, action.target_message_id):
+            raise MTProtoActionUnavailable("edit target is not an extant assistant message")
+        client = await self.transport.connect()
+        peer = await self.transport.resolve_peer(peer_id_for_chat(item.chat_id))
+        await client.edit_message(peer, action.target_message_id, text)
+        if not await self.db.update_assistant_message(item.chat_id, action.target_message_id, text):
+            raise MTProtoActionUnavailable("edit target changed before local history update")
+
+    async def _delete(self, item):
+        action = item.action
+        if not action.target_message_id:
+            raise MTProtoActionUnavailable("delete requires target_message_id")
+        if not await self.db.known_assistant_message(item.chat_id, action.target_message_id):
+            raise MTProtoActionUnavailable("delete target is not an extant assistant message")
+        client = await self.transport.connect()
+        peer = await self.transport.resolve_peer(peer_id_for_chat(item.chat_id))
+        await client.delete_messages(peer, [action.target_message_id])
+        if not await self.db.mark_assistant_message_deleted(item.chat_id, action.target_message_id):
+            raise MTProtoActionUnavailable("delete target changed before local history update")
 
     async def _reaction(self, item):
         action = item.action
         if not action.emoji or not action.target_message_id:
-            log.debug("mtproto_reaction_skipped reason=missing_target_or_emoji")
-            return
+            raise MTProtoActionUnavailable("reaction requires both emoji and target_message_id")
         from telethon.tl.functions.messages import SendReactionRequest
         from telethon.tl.types import ReactionEmoji
         client = await self.transport.connect()
@@ -277,16 +346,14 @@ class MTProtoActionExecutor:
 
     async def _sticker(self, item):
         if not self.stickers or not self.sticker_documents:
-            log.info("mtproto_sticker_skipped reason=sticker_catalog_unavailable")
-            return
+            raise MTProtoActionUnavailable("sticker catalog is unavailable for MTProto")
         action = item.action
         sticker_id = action.sticker_id or (await self.stickers.resolve_intent(action.sticker_intent, item.chat_id) if action.sticker_intent else None)
         if not sticker_id:
-            return
+            raise MTProtoActionUnavailable("no MTProto sticker matches the requested intent")
         document = await self.sticker_documents.input_document(sticker_id)
         if not document:
-            log.info("mtproto_sticker_skipped sticker_id=%s reason=no_mtproto_document", sticker_id)
-            return
+            raise MTProtoActionUnavailable(f"sticker {sticker_id} has no reusable MTProto document")
         client = await self.transport.connect()
         sent = await client.send_file(await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), document)
         file_id = await self.stickers.file_id(sticker_id)
@@ -327,15 +394,14 @@ class MTProtoActionExecutor:
     async def _voice(self, item):
         action = item.action
         if not action.voice_intent or not self.voice_provider or not getattr(self.voice_provider, "enabled", True):
-            log.info("mtproto_voice_skipped reason=voice_provider_unavailable")
-            return
+            raise MTProtoActionUnavailable("voice provider is unavailable")
         session = await self.start_generation_typing(item.chat_id)
         try:
             generated = await self.voice_provider.generate(action.voice_intent.text, mood=action.voice_intent.mood, pace=action.voice_intent.pace, energy=action.voice_intent.energy)
         finally:
             await self.stop_generation_typing(session)
         if not generated or not generated.data:
-            return
+            raise MTProtoActionUnavailable("voice provider returned no playable audio")
         extension = ".ogg" if generated.mime_type in {"audio/ogg", "audio/opus"} else ".mp3" if generated.mime_type == "audio/mpeg" else ".bin"
         client = await self.transport.connect()
         sent = await client.send_file(await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), self._upload(generated.data, "anya" + extension), voice_note=True)
