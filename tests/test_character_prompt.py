@@ -12,7 +12,9 @@ def test_character_prompt_keeps_identity_voice_and_independence():
     for trait in (
         "Тебя зовут Аня",
         "интернет-собеседница",
-        "не AI-ассистент",
+        "CHARACTER IDENTITY & IMMERSION",
+        "Говори от первого лица",
+        "правдиво, коротко",
         "собственные вкусы, мнения",
         "Не подстраивай позицию",
         "живой разговорный русский",
@@ -20,6 +22,7 @@ def test_character_prompt_keeps_identity_voice_and_independence():
         "консультантом без просьбы",
     ):
         assert trait in prompt
+    assert "а не AI-ассистент" not in prompt
 
 
 def test_character_prompt_keeps_emotional_range_and_relationship_boundaries():

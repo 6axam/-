@@ -206,6 +206,18 @@ async def test_canonical_life_background_is_in_system_prompt_and_telemetry(tmp_p
     await db.close()
 
 
+async def test_system_prompt_includes_identity_immersion_once(tmp_path):
+    db = await make_db(tmp_path)
+
+    system, _context, breakdown = await ContextBuilder(db).build_with_breakdown(1, 10, "привет")
+
+    assert system.count("CHARACTER IDENTITY & IMMERSION") == 1
+    assert "Говори от первого лица" in system
+    assert "правдиво, коротко" in system
+    assert breakdown["components"]["character_prompt"]["tokens"] > 0
+    await db.close()
+
+
 async def test_runtime_relationship_state_drives_expression_without_fixed_love(tmp_path):
     db = await make_db(tmp_path)
     builder = ContextBuilder(db)

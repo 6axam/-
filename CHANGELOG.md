@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.29.1 — Character identity immersion
+`unreleased` · 2026-10-20
+
+Clarified Anya's first-person character immersion while keeping direct
+questions about her nature truthful, brief, and non-technical.
+
 ## v1.29.0 — Agentic tool and belief foundation
 `unreleased` · 2026-10-19
 
