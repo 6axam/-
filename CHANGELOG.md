@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.29.0 — Agentic tool and belief foundation
+`unreleased` · 2026-10-19
+
+Added typed, permission-gated offline tool execution; strengthened social
+consent/expiry enforcement; and introduced evidence-backed revisable beliefs
+with deletion-aware provenance and context retrieval.
+
 ## v1.28.0 — Consent-gated social experience and MTProto reliability
 `unreleased` · 2026-10-19
 

@@ -22,7 +22,8 @@ class ContextBuilder:
                  reaction_tendency: float = .40, voice_message_tendency: float = .20, voice_message_available: bool = False,
                  emotion_engine=None, episodic_memory=None, episodic_memory_max_items: int = 6, episodic_memory_token_budget: int = 900,
                  shared_state=None, social_memory_retrieval=None,
-                 social_memory_token_budget: int = 220, social_memory_max_items: int = 4):
+                 social_memory_token_budget: int = 220, social_memory_max_items: int = 4,
+                 belief_retrieval=None, belief_token_budget: int = 220, belief_max_items: int = 4):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.emotion_engine = emotion_engine
@@ -42,6 +43,9 @@ class ContextBuilder:
         self.social_memory_retrieval = social_memory_retrieval
         self.social_memory_token_budget = social_memory_token_budget
         self.social_memory_max_items = social_memory_max_items
+        self.belief_retrieval = belief_retrieval
+        self.belief_token_budget = belief_token_budget
+        self.belief_max_items = belief_max_items
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -149,6 +153,7 @@ class ContextBuilder:
             "relevant_memories": component_size(""), "anya_life_events": component_size(""),
             "episodic_memories": component_size(""),
             "social_memories": component_size(""),
+            "developed_beliefs": component_size(""),
             "current_life_state": component_size(""),
             "shared_world_state": component_size(""), "contact_state": component_size(""),
             "delay_event_context": component_size(""),
@@ -162,6 +167,7 @@ class ContextBuilder:
         retrieved_life_event_ids: list[int] = []
         retrieved_episode_ids: list[int] = []
         retrieved_social_memory_ids: list[int] = []
+        retrieved_belief_ids: list[int] = []
         local = datetime.now(ZoneInfo(self.timezone_name))
         affective_chemistry = affective_emotions = affective_behavior = None
         conflict_activation = 0.
@@ -319,6 +325,26 @@ class ContextBuilder:
                     blocks.append(block); components["social_memories"] = component_size(block)
             except Exception:
                 log.exception("social_memory_retrieval_failed chat_id=%s", chat_id)
+        if self.belief_retrieval:
+            try:
+                beliefs = await self.belief_retrieval.search(user_turn, self.belief_max_items)
+                lines = []
+                for row in beliefs:
+                    certainty = "tentative" if row["confidence"] < .45 else "held with some confidence"
+                    rendered = f"- {row['proposition']} ({row['stance']}; {certainty})"
+                    if estimate_tokens("\n".join([*lines, rendered])) > self.belief_token_budget:
+                        break
+                    lines.append(rendered)
+                    retrieved_belief_ids.append(row["id"])
+                if lines:
+                    block = (
+                        "DEVELOPED VIEWS\n" + "\n".join(lines)
+                        + "\nThese are your revisable positions, not universal facts. Speak naturally; preserve uncertainty "
+                        "where it exists and consider relevant counterarguments."
+                    )
+                    blocks.append(block); components["developed_beliefs"] = component_size(block)
+            except Exception:
+                log.exception("belief_retrieval_failed")
         if self.personality:
             entries = await self.personality.relevant(user_turn)
             developed = "\n".join(f"- {row['category']} / {row['subject']}: {row['value']} (strength {row['strength']:.2f})" for row in entries) or "(none yet)"
@@ -375,6 +401,7 @@ class ContextBuilder:
             "retrieved_life_event_ids": retrieved_life_event_ids,
             "retrieved_episode_ids": retrieved_episode_ids,
             "retrieved_social_memory_ids": retrieved_social_memory_ids,
+            "retrieved_belief_ids": retrieved_belief_ids,
             "target_input_tokens": self.target_input_tokens, "components": components,
             "estimated_input_tokens": sum(part["tokens"] for part in components.values()),
         }

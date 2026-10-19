@@ -33,6 +33,8 @@ class SourcePermissionPolicy:
             # switch is intentionally insufficient.
             if not permission.explicit_consent or not permission.consent_scope:
                 return PermissionDecision(False, "telegram_context_consent_required")
-            if event.thread_id and permission.consent_scope != event.thread_id:
+            if not event.thread_id:
+                return PermissionDecision(False, "telegram_thread_id_required")
+            if permission.consent_scope != event.thread_id:
                 return PermissionDecision(False, "telegram_consent_scope_mismatch")
         return PermissionDecision(True)

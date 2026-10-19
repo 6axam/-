@@ -65,3 +65,32 @@ retention/forgetting and source deletion propagation, still offline-first.
 **Next:** Stage 3 — add evidence records and a conservative, provenance-aware
 belief revision boundary. No source statement will become an Anya belief by
 default.
+
+## 2026-10-19 — Stage 3 foundation: evidence and revisable views
+
+- Retrieval now excludes expired social memory in its SQL predicate even if a
+  background expiry job has not run. Telegram ingestion now fails closed when
+  a source event lacks a thread ID or its thread differs from the consent
+  scope.
+- Added separate provenance-carrying `social_evidence`, `social_beliefs`,
+  evidence-link and revision tables. Existing private memories, episodes,
+  relationship state and developed-personality records remain untouched.
+- An `external_claim` is stored only as evidence. It cannot form or revise an
+  Anya belief. Formation requires an explicit own-reflection/curated proposal;
+  revision accepts only qualified evidence and deduplicates by an independent
+  source key, so repetition/popularity cannot amplify confidence.
+- Relevant active positions can enter `ContextBuilder` as compact, explicitly
+  revisable views. Raw external evidence is never inserted into that block.
+- When a source deletes an event, linked evidence is retracted and its prior
+  confidence contribution is reversed through a separate revision record.
+  The original audit/provenance row remains intact.
+- This foundation runs no appraisal automatically and makes no extra LLM,
+  Telegram or network call. Topic extraction and evidence qualification remain
+  explicit future work rather than silently inferred from a post.
+
+**Verification:** targeted 28 passed in 0.98 s; full 390 passed in 11.56 s;
+`compileall` and `git diff --check` passed.
+
+**Next:** complete Stage 3 with structured offline appraisal fixtures,
+contradiction handling and carefully bounded belief formation from qualified
+appraisal rather than raw source text.

@@ -25,10 +25,11 @@ class SocialExperienceIngestor:
 
     max_excerpt_chars = 512
 
-    def __init__(self, db, permission_policy: SourcePermissionPolicy | None = None, memory_router=None):
+    def __init__(self, db, permission_policy: SourcePermissionPolicy | None = None, memory_router=None, belief_engine=None):
         self.db = db
         self.permission_policy = permission_policy or SourcePermissionPolicy()
         self.memory_router = memory_router
+        self.belief_engine = belief_engine
 
     async def ingest(self, adapter) -> IngestionResult:
         await adapter.connect()
@@ -58,6 +59,8 @@ class SocialExperienceIngestor:
                 if inserted and event.event_kind == "delete":
                     deleted = await self.db.delete_social_event_content(source_row_id, event.reference_event_ids)
                     result = IngestionResult(**{**result.__dict__, "deleted": result.deleted + deleted})
+                    if self.belief_engine and deleted:
+                        await self.belief_engine.retract_event_evidence(source_row_id, event.reference_event_ids)
                 elif inserted and decision.allowed and event.event_kind in {"edit", "restore"}:
                     await self.db.update_social_event_content(
                         source_row_id, event.reference_event_ids,

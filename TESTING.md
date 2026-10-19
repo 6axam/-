@@ -35,6 +35,12 @@ git diff --check
 
 | Date | Command | Result | Pytest duration | Shell elapsed | Notes |
 | --- | --- | --- | ---: | ---: | --- |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q` | 393 passed | 10.77 s | 12.20 s | Full offline suite after Agentic Brain Stage 1 typed registry and core offline tool contracts. |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q tests/test_agent_tools.py tests/test_social_experience.py tests/test_mtproto_runtime.py tests/test_transport_scheduling.py` | 29 passed | 1.13 s | 1.80 s | Typed tool validation, authorization/capabilities, core memory/belief tools and existing social/MTProto regressions. |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q` | 390 passed | 11.56 s | 13.10 s | Full offline suite after social evidence retraction and confidence rollback on source deletion. |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q tests/test_social_experience.py tests/test_context_budget.py tests/test_database.py` | 28 passed | 0.98 s | 1.50 s | Expiry SQL, fail-closed Telegram consent, evidence provenance, independent revision, deletion retraction and context coverage. |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q` | 389 passed | 11.04 s | 12.50 s | Full offline suite after social retrieval expiry/Telegram consent hardening and Stage 3 evidence-belief foundation. |
+| 2026-10-19 | `./.venv/bin/python -m pytest -q tests/test_social_experience.py tests/test_context_budget.py tests/test_database.py` | 27 passed | 0.97 s | 1.40 s | Expiry SQL, fail-closed Telegram consent, evidence provenance, belief revision independence and context retrieval coverage. |
 | 2026-10-19 | `./.venv/bin/python -m pytest -q` | 385 passed | 10.76 s | 12.20 s | Full offline suite after Social Cognition Stage 2 completion: scope-limited social-memory retrieval in ContextBuilder. |
 | 2026-10-19 | `./.venv/bin/python -m pytest -q tests/test_social_experience.py tests/test_context_budget.py tests/test_database.py` | 23 passed | 0.85 s | 1.30 s | Social memory tiers, consent-scope retrieval, prompt-injection framing, context budget and SQLite coverage. |
 | 2026-10-19 | `./.venv/bin/python -m pytest -q` | 384 passed | 10.70 s | 12.20 s | Full offline suite after Social Cognition Stage 2 memory-routing foundation, plus consented edit/restore and deletion propagation. |

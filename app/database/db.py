@@ -652,6 +652,61 @@ MIGRATIONS = [
     );
     CREATE INDEX IF NOT EXISTS idx_social_memories_active ON social_memories(status,tier,expires_at);
     """,
+    """
+    -- Stage 3 keeps external evidence separate from Anya's own beliefs.
+    -- No raw social statement becomes a belief merely by being persisted here.
+    CREATE TABLE IF NOT EXISTS social_evidence (
+      id INTEGER PRIMARY KEY,
+      social_event_id INTEGER REFERENCES social_events(id),
+      topic TEXT NOT NULL,
+      proposition TEXT NOT NULL,
+      evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('observation','external_claim','verified_fact','own_reflection')),
+      reliability REAL NOT NULL CHECK(reliability >= 0 AND reliability <= 1),
+      independence_key TEXT NOT NULL,
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','retracted')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(social_event_id,evidence_kind,proposition)
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_evidence_topic ON social_evidence(topic,status);
+    CREATE TABLE IF NOT EXISTS social_beliefs (
+      id INTEGER PRIMARY KEY,
+      topic TEXT NOT NULL,
+      proposition TEXT NOT NULL,
+      stance TEXT NOT NULL CHECK(stance IN ('support','oppose','uncertain')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      importance REAL NOT NULL CHECK(importance >= 0 AND importance <= 1),
+      emotional_significance REAL NOT NULL CHECK(emotional_significance >= 0 AND emotional_significance <= 1),
+      origin TEXT NOT NULL CHECK(origin IN ('own_reflection','curated_seed')),
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','superseded','retracted')),
+      first_formed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_revised_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(topic,proposition)
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_beliefs_active ON social_beliefs(status,importance,confidence);
+    CREATE TABLE IF NOT EXISTS social_belief_evidence (
+      belief_id INTEGER NOT NULL REFERENCES social_beliefs(id),
+      evidence_id INTEGER NOT NULL REFERENCES social_evidence(id),
+      relation TEXT NOT NULL CHECK(relation IN ('support','contradict')),
+      weight REAL NOT NULL CHECK(weight >= 0 AND weight <= 1),
+      independence_key TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(belief_id,evidence_id),
+      UNIQUE(belief_id,independence_key)
+    );
+    CREATE TABLE IF NOT EXISTS social_belief_revisions (
+      id INTEGER PRIMARY KEY,
+      belief_id INTEGER NOT NULL REFERENCES social_beliefs(id),
+      evidence_id INTEGER REFERENCES social_evidence(id),
+      old_confidence REAL NOT NULL,
+      new_confidence REAL NOT NULL,
+      old_stance TEXT NOT NULL,
+      new_stance TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
 ]
 
 
@@ -809,6 +864,29 @@ class Database:
             )
         return result.rowcount
 
+    async def active_social_evidence_for_events(self, source_row_id: int, event_ids: tuple[str, ...]):
+        if not event_ids:
+            return []
+        placeholders = ",".join("?" for _ in event_ids)
+        return await self.fetchall(
+            f"SELECT se.* FROM social_evidence se JOIN social_events e ON e.id=se.social_event_id "
+            f"WHERE e.source_row_id=? AND e.event_id IN ({placeholders}) AND se.status='active'",
+            (source_row_id, *event_ids),
+        )
+
+    async def social_belief_evidence_links(self, evidence_id: int):
+        return await self.fetchall(
+            "SELECT l.belief_id,l.relation,l.weight,b.confidence,b.stance FROM social_belief_evidence l "
+            "JOIN social_beliefs b ON b.id=l.belief_id WHERE l.evidence_id=? AND b.status='active'",
+            (evidence_id,),
+        )
+
+    async def retract_social_evidence(self, evidence_id: int) -> bool:
+        result = await self.execute(
+            "UPDATE social_evidence SET status='retracted' WHERE id=? AND status='active'", (evidence_id,),
+        )
+        return result.rowcount == 1
+
     async def update_social_event_content(
         self,
         source_row_id: int,
@@ -883,13 +961,74 @@ class Database:
             "JOIN social_events e ON e.id=m.social_event_id "
             "JOIN social_sources s ON s.id=e.source_row_id "
             "WHERE m.status='active' AND m.summary IS NOT NULL "
+            "AND (m.expires_at IS NULL OR m.expires_at>?) "
             "AND e.status IN ('accepted','restored') AND s.status='enabled' "
             "AND s.ai_processing_allowed=1 AND s.memory_allowed=1 "
             "AND s.consent_scope=? "
             "AND (s.permission_expires_at IS NULL OR s.permission_expires_at>=?) "
             "ORDER BY CASE m.tier WHEN 'episodic' THEN 0 WHEN 'working' THEN 1 ELSE 2 END, "
             "(m.importance + m.emotional_significance) DESC, e.occurred_at DESC, m.id DESC LIMIT 200",
-            (consent_scope, now_iso),
+            (now_iso, consent_scope, now_iso),
+        )
+
+    async def record_social_evidence(self, *, social_event_id: int | None, topic: str, proposition: str,
+                                     evidence_kind: str, reliability: float, independence_key: str,
+                                     provenance: dict) -> int | None:
+        result = await self.execute(
+            "INSERT INTO social_evidence(social_event_id,topic,proposition,evidence_kind,reliability,independence_key,provenance_json) "
+            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(social_event_id,evidence_kind,proposition) DO NOTHING",
+            (social_event_id, topic, proposition, evidence_kind, reliability, independence_key,
+             json.dumps(provenance, sort_keys=True)),
+        )
+        if result.rowcount:
+            return result.lastrowid
+        row = await self.fetchone(
+            "SELECT id FROM social_evidence WHERE social_event_id IS ? AND evidence_kind=? AND proposition=?",
+            (social_event_id, evidence_kind, proposition),
+        )
+        return int(row["id"]) if row else None
+
+    async def social_evidence(self, evidence_id: int):
+        return await self.fetchone("SELECT * FROM social_evidence WHERE id=?", (evidence_id,))
+
+    async def create_social_belief(self, *, topic: str, proposition: str, stance: str, confidence: float,
+                                   importance: float, emotional_significance: float, origin: str, provenance: dict) -> int | None:
+        result = await self.execute(
+            "INSERT INTO social_beliefs(topic,proposition,stance,confidence,importance,emotional_significance,origin,provenance_json) "
+            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(topic,proposition) DO NOTHING",
+            (topic, proposition, stance, confidence, importance, emotional_significance, origin,
+             json.dumps(provenance, sort_keys=True)),
+        )
+        return result.lastrowid if result.rowcount else None
+
+    async def social_belief(self, belief_id: int):
+        return await self.fetchone("SELECT * FROM social_beliefs WHERE id=? AND status='active'", (belief_id,))
+
+    async def link_social_belief_evidence(self, *, belief_id: int, evidence_id: int, relation: str,
+                                          weight: float, independence_key: str) -> bool:
+        result = await self.execute(
+            "INSERT INTO social_belief_evidence(belief_id,evidence_id,relation,weight,independence_key) VALUES(?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
+            (belief_id, evidence_id, relation, weight, independence_key),
+        )
+        return result.rowcount == 1
+
+    async def revise_social_belief(self, *, belief_id: int, evidence_id: int, old_confidence: float,
+                                   new_confidence: float, old_stance: str, new_stance: str, reason: str) -> None:
+        await self.execute(
+            "UPDATE social_beliefs SET confidence=?,stance=?,last_revised_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'",
+            (new_confidence, new_stance, belief_id),
+        )
+        await self.execute(
+            "INSERT INTO social_belief_revisions(belief_id,evidence_id,old_confidence,new_confidence,old_stance,new_stance,reason) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (belief_id, evidence_id, old_confidence, new_confidence, old_stance, new_stance, reason),
+        )
+
+    async def active_social_beliefs(self):
+        return await self.fetchall(
+            "SELECT id,topic,proposition,stance,confidence,importance,emotional_significance,origin "
+            "FROM social_beliefs WHERE status='active' ORDER BY importance DESC,confidence DESC,id DESC LIMIT 100",
         )
 
     async def fetchall(self, sql, values=()):

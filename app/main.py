@@ -31,6 +31,7 @@ from app.memory.extractor import MemoryExtractor
 from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
 from app.social.retrieval import SocialMemoryRetrieval
+from app.social.beliefs import BeliefRetrieval
 from app.self_life import SelfLifeManager
 from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 from app.emotions.engine import EmotionalEngine
@@ -130,6 +131,7 @@ async def main():
     memory_manager = MemoryManager(db)
     memory_retrieval = MemoryRetrieval(memory_manager)
     social_memory_retrieval = SocialMemoryRetrieval(db)
+    belief_retrieval = BeliefRetrieval(db)
     self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
     transport_name = "mtproto" if use_mtproto else "bot_api"
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
@@ -154,7 +156,8 @@ async def main():
                              episodic_memory_token_budget=s.episodic_memory_context_token_budget,
                              episodic_memory_max_items=s.episodic_memory_max_context_items,
                              shared_state=shared_state,
-                             social_memory_retrieval=social_memory_retrieval)
+                             social_memory_retrieval=social_memory_retrieval,
+                             belief_retrieval=belief_retrieval)
     context.affective_engine = affective_engine
     context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
