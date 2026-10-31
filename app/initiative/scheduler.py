@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import random
 import uuid
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.actions.models import ActionType
 from app.llm.schemas import LLMRequest
+from app.initiative.mood import mood_initiative_drive
 
 log = logging.getLogger(__name__)
 
@@ -31,12 +33,17 @@ class InitiativeScheduler:
         state = (await engine.get(chat_id)).values() if engine else None
         if not state: return base
         affective = getattr(conversation_context, "affective_engine", None)
+        behavior = None
         if affective:
             behavior = await affective.get_behavior(chat_id)
-            base *= max(.1, min(1.7, .25 + behavior.contact_drive * 1.4 + behavior.protest_drive * .25 + behavior.repair_drive * .2 - behavior.avoidance * .5 - (1 - behavior.response_energy) * .5))
+            initiative_drive = getattr(behavior, "initiative_drive", behavior.contact_drive)
+            base *= max(.1, min(1.7, .25 + behavior.contact_drive * 1.4 + initiative_drive * .65 + behavior.protest_drive * .25 + behavior.repair_drive * .2 - behavior.avoidance * .5 - (1 - behavior.response_energy) * .5))
         pull = (state["social_need"] - .45) + (state["curiosity"] - .55) + (state["warmth"] - .65)
         resistance = (state["fatigue"] - .25) + (state["hurt"] - .02) + (state["irritation"] - .05) + (state["anxiety"] - .10)
         probability = base * (1 + pull * .35 - resistance * .30)
+        if behavior:
+            drive = mood_initiative_drive(state, behavior)
+            probability += (drive - .5) * .15
         episodes = getattr(conversation_context, "episodic_memory", None)
         if episodes:
             loops = await episodes.open_loops(chat_id, limit=1)
@@ -44,6 +51,33 @@ class InitiativeScheduler:
                 top = loops[0]
                 probability += min(.08, (.5 * top['importance'] + .5 * top['confidence']) * .08)
         return max(.15, min(.85, probability))
+
+    async def _mood_state(self, chat_id: int):
+        conversation_context = getattr(self.context, "conversation_context", None)
+        emotion_engine = getattr(conversation_context, "emotion_engine", None)
+        emotions = (await emotion_engine.get(chat_id)).values() if emotion_engine else None
+        affective_engine = getattr(conversation_context, "affective_engine", None)
+        behavior = await affective_engine.get_behavior(chat_id) if affective_engine else None
+        return emotions, behavior
+
+    async def _randomized_cooldown_hours(self, chat_id: int, event_id: int, created_at: str,
+                                         activity_score: float) -> float:
+        minimum = getattr(self.settings, "initiative_cooldown_min_hours", None)
+        maximum = getattr(self.settings, "initiative_cooldown_max_hours", None)
+        # Backward compatibility for focused callers/config fixtures that only
+        # supply the former fixed cooldown.
+        if minimum is None or maximum is None:
+            fixed = getattr(self.settings, "initiative_cooldown_hours", 3.)
+            return max(0., float(fixed))
+        minimum, maximum = max(0., float(minimum)), max(float(minimum), float(maximum))
+        emotions, behavior = await self._mood_state(chat_id)
+        drive = mood_initiative_drive(emotions, behavior)
+        seed = hashlib.blake2b(f"{chat_id}:{event_id}:{created_at}".encode(), digest_size=8).digest()
+        draw = random.Random(int.from_bytes(seed, "big")).random()
+        # Each initiative gets a stable random interval across process restarts.
+        # Frequent contact and higher initiative drive both bias it toward the short end.
+        shaped_draw = draw ** (1 + 2 * drive + 2 * activity_score)
+        return minimum + (maximum - minimum) * shaped_draw
 
     async def _safety_block(self, chat_id: int, daily_state=None):
         if self.manager.has_active_generation(chat_id): return "active_generation"
@@ -60,6 +94,27 @@ class InitiativeScheduler:
         daily_state = await self.presence.state(chat_id) if self.presence else {"availability": "available", "event": None}
         blocked = await self._safety_block(chat_id, daily_state)
         if blocked: return False, blocked, state
+        activity_days = max(1, int(getattr(self.settings, "initiative_contact_window_days", 7)))
+        activity = await self.db.fetchone(
+            "SELECT COUNT(*) AS messages,(julianday('now')-julianday(MAX(timestamp)))*24 AS age_hours "
+            "FROM messages WHERE chat_id=? AND sender='user' AND timestamp>=datetime('now', ?)",
+            (chat_id, f"-{activity_days} days"),
+        )
+        activity_count = int(activity["messages"] or 0)
+        if activity_count == 0 and state.get("last_meaningful_interaction_at"):
+            # The lifecycle timestamp can preserve a recent-contact signal if
+            # old message rows were compacted or imported without history.
+            age = await self.db.fetchone(
+                "SELECT (julianday('now')-julianday(?))*24 AS hours",
+                (state["last_meaningful_interaction_at"],),
+            )
+            if age and age["hours"] is not None and age["hours"] <= activity_days * 24:
+                activity_count = 1
+        if activity_count == 0:
+            return False, "no_recent_contact", state
+        activity_score = min(1., activity_count / (activity_days * 2.))
+        state["contact_activity_messages"] = activity_count
+        state["contact_activity_score"] = activity_score
         if self.presence and getattr(self.settings, "bedtime_ritual_enabled", False):
             state_for = getattr(self.presence, "bedtime_state_for", None)
             bedtime = await state_for(chat_id, window_minutes=getattr(self.settings, "bedtime_window_minutes", 20)) if state_for else self.presence.bedtime_state(window_minutes=getattr(self.settings, "bedtime_window_minutes", 20))
@@ -80,13 +135,23 @@ class InitiativeScheduler:
             basis = "spontaneous"
         else:
             basis = "semantic"
-        cooldown = await self.db.fetchone("SELECT (julianday('now')-julianday(MAX(created_at)))*24 AS hours FROM initiative_history WHERE chat_id=?", (chat_id,))
-        if cooldown["hours"] is not None and cooldown["hours"] < self.settings.initiative_cooldown_hours: return False, "cooldown", state
+        cooldown = await self.db.fetchone(
+            "SELECT id,created_at,(julianday('now')-julianday(created_at))*24 AS hours "
+            "FROM initiative_history WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 1", (chat_id,),
+        )
+        if cooldown and cooldown["hours"] is not None:
+            wait_hours = await self._randomized_cooldown_hours(
+                chat_id, cooldown["id"], cooldown["created_at"], activity_score,
+            )
+            if cooldown["hours"] < wait_hours:
+                state["randomized_cooldown_hours"] = wait_hours
+                return False, "randomized_cooldown", state
         daily = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history WHERE chat_id=? AND date(created_at)=date('now')", (chat_id,))
         if daily["count"] >= self.settings.initiative_max_per_day: return False, "daily_limit", state
         unanswered = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history h WHERE h.chat_id=? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id=h.chat_id AND m.sender='user' AND julianday(m.timestamp)>julianday(h.created_at))", (chat_id,))
         if unanswered["count"] >= self.settings.initiative_max_unanswered: return False, "max_unanswered", state
-        if basis == "spontaneous" and self.rng() >= await self._spontaneous_probability(chat_id):
+        activity_factor = .85 + .15 * activity_score
+        if basis == "spontaneous" and self.rng() >= await self._spontaneous_probability(chat_id) * activity_factor:
             return False, "spontaneous_gate_closed", state
         state["initiative_basis"], state["daily_state"] = basis, daily_state
         return True, basis, state

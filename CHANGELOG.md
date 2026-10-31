@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.33.0 — Mood and contact-aware initiatives
+`unreleased` · 2026-11-01
+
+Randomized per-contact initiative waits across a one-to-five-hour window,
+weighted by affective drive and recent contact frequency. Contacts with no
+messages in the last week are no longer initiated.
+
 ## v1.32.1 — Per-contact MTProto initiative cap
 `unreleased` · 2026-11-01
 

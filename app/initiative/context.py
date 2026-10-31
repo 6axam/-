@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from app.conversation.tokens import component_size, estimate_tokens
 from app.llm.prompts import read_prompt
+from app.initiative.mood import mood_initiative_drive
 
 
 class InitiativeContextBuilder:
@@ -16,8 +17,9 @@ class InitiativeContextBuilder:
     open_loop_max_items = 3
     target_input_tokens = 3500
 
-    def __init__(self, conversation_context, lifecycle, presence=None):
+    def __init__(self, conversation_context, lifecycle, presence=None, contact_window_days=7):
         self.conversation_context, self.lifecycle, self.presence = conversation_context, lifecycle, presence
+        self.contact_window_days = max(1, int(contact_window_days))
 
     @staticmethod
     def _bounded(lines, budget):
@@ -34,6 +36,12 @@ class InitiativeContextBuilder:
         event = daily_state.get("event")
         local = datetime.now(ZoneInfo(getattr(cc, "timezone_name", "Europe/Kyiv")))
         idle = await db.fetchone("SELECT (julianday('now')-julianday(MAX(timestamp)))*1440 AS minutes FROM messages WHERE chat_id=? AND sender='user'", (chat_id,))
+        activity = await db.fetchone(
+            "SELECT COUNT(*) AS messages FROM messages WHERE chat_id=? AND sender='user' AND timestamp>=datetime('now', ?)",
+            (chat_id, f"-{self.contact_window_days} days"),
+        )
+        activity_count = int(activity["messages"] or 0)
+        activity_score = min(1., activity_count / (self.contact_window_days * 2.))
         cooldown = await db.fetchone("SELECT (julianday('now')-julianday(MAX(created_at)))*24 AS hours, COUNT(CASE WHEN date(created_at)=date('now') THEN 1 END) AS today FROM initiative_history WHERE chat_id=?", (chat_id,))
         rows = await db.recent_messages(chat_id, limit=self.recent_max_messages, recent_media_hours=cc.recent_media_hours)
         rendered = [f"{row['sender']}: {row['text'] or '[' + row['type'] + ']'}" for row in rows]
@@ -61,12 +69,22 @@ class InitiativeContextBuilder:
             motive = dominant_motive(behavior, emotions)
             block = relationship_context(bond, behavior, motive=motive)
             blocks.append(block); components["relationship_state"] = component_size(block)
+            emotion_values = emotions.values()
+            mood_drive = mood_initiative_drive(emotion_values, behavior)
+            mood_block = (
+                "INITIATIVE MOOD LEVEL\n"
+                f"initiative_drive={behavior.initiative_drive:.2f}; contact_drive={behavior.contact_drive:.2f}; "
+                f"social_need={emotion_values.get('social_need', 0):.2f}; fatigue={emotion_values.get('fatigue', 0):.2f}; "
+                f"avoidance={behavior.avoidance:.2f}; mood_adjusted_drive={mood_drive:.2f}.\n"
+                "Let this level affect whether and how strongly you feel like reaching out: high drive can make an initiative more spontaneous, warm, playful or emotionally vivid; low drive, fatigue or avoidance can make you wait, keep it brief, or choose silence. Safety gates and recipient boundaries are absolute."
+            )
+            blocks.append(mood_block); components["emotional_state"] = component_size(mood_block)
         event_text = "active_event=false"
         if event:
             event_text = f"active_event=true; title={event['title']}; availability={event['availability']}; mentionable=true" if event["mentionable"] else f"active_event=true; availability={event['availability']}; mentionable=false"
         block = f"CURRENT ANYA LIFE STATE\nlocal_time={local.strftime('%Y-%m-%d %H:%M')}; local_day={local.date()}; phase={daily_state.get('phase', 'free')}; availability={daily_state.get('availability', 'available')}; {event_text}"
         blocks.append(block); components["current_life_state"] = component_size(block)
-        block = f"INITIATIVE CONTEXT\nbasis={basis}; status={lifecycle['conversation_status']}; expects_reply={lifecycle['expects_reply']}; followup_importance={lifecycle['followup_importance']:.2f}; followup_reason={lifecycle['followup_reason'] or '(none)'}; user_idle_minutes={int(idle['minutes'] or 0)}; hours_since_last={cooldown['hours'] if cooldown['hours'] is not None else 'never'}; initiatives_today={cooldown['today']}"
+        block = f"INITIATIVE CONTEXT\nbasis={basis}; status={lifecycle['conversation_status']}; expects_reply={lifecycle['expects_reply']}; followup_importance={lifecycle['followup_importance']:.2f}; followup_reason={lifecycle['followup_reason'] or '(none)'}; user_idle_minutes={int(idle['minutes'] or 0)}; user_messages_last_{self.contact_window_days}d={activity_count}; contact_activity={activity_score:.2f}; hours_since_last={cooldown['hours'] if cooldown['hours'] is not None else 'never'}; initiatives_today={cooldown['today']}"
         blocks.append(block); components["eligibility_lifecycle"] = component_size(block)
         if bedtime_state:
             block = f"BEDTIME STATE\nlocal_time={bedtime_state['local_time']}; minutes_until_sleep={bedtime_state['minutes_until_sleep']}; bedtime_window=true; sleep_soon=true; already_said_goodnight=false. A bedtime initiative, if chosen, is one short natural farewell; do not guilt or demand a reply."

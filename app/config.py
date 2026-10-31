@@ -67,7 +67,12 @@ class Settings(BaseSettings):
     initiative_min_idle_minutes: int = Field(default=30, ge=1, le=1440)
     initiative_spontaneous_min_idle_minutes: int = Field(default=60, ge=1, le=10080)
     initiative_spontaneous_probability: float = Field(default=.55, ge=0, le=1)
+    # Legacy fallback for old local configs; new deployments use a randomized
+    # per-contact interval from initiative_cooldown_min_hours to max_hours.
     initiative_cooldown_hours: float = Field(default=3, ge=0, le=168)
+    initiative_cooldown_min_hours: float = Field(default=1, ge=0, le=168)
+    initiative_cooldown_max_hours: float = Field(default=5, ge=0, le=168)
+    initiative_contact_window_days: int = Field(default=7, ge=1, le=60)
     initiative_max_per_day: int = Field(default=5, ge=0, le=24)
     initiative_max_unanswered: int = 1
     conversation_cooling_minutes: int = 30
@@ -230,6 +235,12 @@ class Settings(BaseSettings):
             raise ValueError("ANYA_VOICE_REFERENCE must be 10 MB or smaller")
         if self.voice_output_format != "mp3":
             raise ValueError("OpenRouter Seed Audio output must use mp3")
+        return self
+
+    @model_validator(mode="after")
+    def valid_initiative_cooldown_window(self):
+        if self.initiative_cooldown_max_hours <= self.initiative_cooldown_min_hours:
+            raise ValueError("INITIATIVE_COOLDOWN_MAX_HOURS must be greater than INITIATIVE_COOLDOWN_MIN_HOURS")
         return self
 
 

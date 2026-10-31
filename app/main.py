@@ -320,7 +320,8 @@ async def main():
     ) if mtproto else None
     initiative_chat_ids = {-peer_id for peer_id in mtproto.settings.allowlist} if mtproto else None
     initiative = InitiativeScheduler(
-        db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence),
+        db, manager, lifecycle, scheduler,
+        InitiativeContextBuilder(context, lifecycle, presence, s.initiative_contact_window_days),
         s, buffer, presence, allowed_chat_ids=initiative_chat_ids,
     )
     manager.initiative_scheduler = initiative
