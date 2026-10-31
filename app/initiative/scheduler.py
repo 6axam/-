@@ -84,12 +84,6 @@ class InitiativeScheduler:
         if cooldown["hours"] is not None and cooldown["hours"] < self.settings.initiative_cooldown_hours: return False, "cooldown", state
         daily = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history WHERE chat_id=? AND date(created_at)=date('now')", (chat_id,))
         if daily["count"] >= self.settings.initiative_max_per_day: return False, "daily_limit", state
-        if self.allowed_chat_ids is not None:
-            global_daily = await self.db.fetchone(
-                "SELECT COUNT(*) AS count FROM initiative_history WHERE date(created_at)=date('now')"
-            )
-            global_limit = getattr(self.settings, "initiative_global_max_per_day", 2)
-            if global_daily["count"] >= global_limit: return False, "global_daily_limit", state
         unanswered = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history h WHERE h.chat_id=? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id=h.chat_id AND m.sender='user' AND julianday(m.timestamp)>julianday(h.created_at))", (chat_id,))
         if unanswered["count"] >= self.settings.initiative_max_unanswered: return False, "max_unanswered", state
         if basis == "spontaneous" and self.rng() >= await self._spontaneous_probability(chat_id):

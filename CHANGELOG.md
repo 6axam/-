@@ -1,12 +1,12 @@
 # Changelog
 
-## v1.32.0 — Allowlisted MTProto initiatives
+## v1.32.1 — Per-contact MTProto initiative cap
 `unreleased` · 2026-11-01
 
 Enabled scheduled first messages on the personal MTProto account for existing
-allowlisted private contacts, with a shared daily cap and rotating recipient
-order. Groups, unknown accounts, and cross-contact initiative actions remain
-blocked.
+allowlisted private contacts, with a cap of five per recipient each day and a
+rotating recipient order. Groups, unknown accounts, and cross-contact initiative
+actions remain blocked.
 
 ## v1.31.0 — Owner-directed contact messages
 `unreleased` · 2026-11-01
