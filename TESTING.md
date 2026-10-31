@@ -216,6 +216,8 @@ git diff --check
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 416 passed | 14.72 s | — | Full suite after deployment-controller locking and immutable image ID tracking. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_deploy_cli.py tests/test_health.py tests/test_database.py tests/test_mtproto_runtime.py tests/test_mtproto_receipts.py tests/test_actions.py` | 33 passed | 1.46 s | — | Final targeted run after CLI help cleanup; validates SHA allowlisting, SQLite migration safety, endpoint and timing attribution. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 416 passed | 14.82 s | — | Final full suite after all deployment and operator CLI changes. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_deploy_cli.py tests/test_health.py` | 13 passed | 0.22 s | — | Regression for Compose file-relative build context and temporary compose env cleanup. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q` | 417 passed | 15.89 s | — | Full suite after the server build exposed and fixed Compose project-directory resolution. |
 
 ## Maintenance rule
 

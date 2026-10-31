@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.30.1 — Compose build path fix
+`unreleased` · 2026-10-31
+
+Resolved Compose paths relative to its file so CLI builds use the repository's
+Dockerfile and full source context.
+
 ## v1.30.0 — Docker deployment and operator CLI
 `unreleased` · 2026-10-31
 

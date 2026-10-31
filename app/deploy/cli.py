@@ -268,8 +268,8 @@ def _compose(paths: dict[str, Path], *args: str, image_tag: str | None = None, c
             stream.write(env)
         os.chmod(name, 0o600)
         return _run(
-            ["docker", "compose", "--project-name", "anya", "--project-directory", str(paths["repo"]),
-             "--env-file", name, "-f", str(paths["compose"]), *args],
+            ["docker", "compose", "--project-name", "anya", "--env-file", name,
+             "-f", str(paths["compose"]), *args],
             cwd=paths["repo"], capture=capture, check=check,
         )
     finally:

@@ -1,11 +1,12 @@
 import sqlite3
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from app.deploy import cli
 from app.deploy.cli import (
-    _database_path, _ensure_clean, _resolve_commit, check_migration_is_additive,
+    _compose, _database_path, _ensure_clean, _resolve_commit, check_migration_is_additive,
     sqlite_backup, _values,
 )
 
@@ -103,6 +104,30 @@ def test_deploy_refuses_dirty_repository(tmp_path):
     (repo / "untracked.txt").write_text("preserve me\n")
     with pytest.raises(RuntimeError, match="dirty"):
         _ensure_clean(repo)
+
+
+def test_compose_keeps_build_paths_relative_to_compose_file(tmp_path, monkeypatch):
+    root, repo = tmp_path / "instance", tmp_path / "repo"
+    root.mkdir(); repo.mkdir()
+    compose = repo / "deploy" / "compose.yaml"
+    compose.parent.mkdir(); compose.write_text("services: {}\n")
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["cwd"] = kwargs["cwd"]
+        env_index = argv.index("--env-file") + 1
+        captured["env_file_exists"] = Path(argv[env_index]).is_file()
+        return ""
+
+    monkeypatch.setattr("app.deploy.cli._run", fake_run)
+    _compose({"root": root, "repo": repo, "data": root / "data", "env": root / "runtime.env",
+              "state": root / "state.json", "compose": compose}, "build", "anya",
+             image_tag="a" * 40)
+    assert "--project-directory" not in captured["argv"]
+    assert captured["cwd"] == repo
+    assert captured["env_file_exists"]
+    assert not list(root.glob(".anya-compose-*.env"))
 
 
 def test_perf_separates_llm_and_scheduled_waits_from_full_reply(tmp_path, monkeypatch, capsys):
