@@ -61,8 +61,10 @@ class MTProtoSettings(BaseSettings):
             raise RuntimeError("Set TELEGRAM_MTPROTO_DRY_RUN=false before starting the MTProto runtime.")
         if not self.allowlist:
             raise RuntimeError("Set TELEGRAM_ALLOWLIST to the Telegram user ID allowed to test Anya.")
-        if self.telegram_auto_reply_unknown or self.telegram_groups_enabled or self.telegram_autonomous_outbound:
-            raise RuntimeError("MTProto test runtime requires unknown replies, groups, and autonomous outbound to remain disabled.")
+        if self.telegram_auto_reply_unknown or self.telegram_groups_enabled:
+            raise RuntimeError("MTProto runtime requires unknown replies and groups to remain disabled.")
+        if self.telegram_autonomous_outbound and not self.allowlist:
+            raise RuntimeError("Autonomous MTProto initiatives require an explicit TELEGRAM_ALLOWLIST.")
 
     @property
     def session_path(self) -> Path:

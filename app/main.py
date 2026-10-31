@@ -318,7 +318,11 @@ async def main():
         db, buffer, manager, lifecycle, stickers, mtproto_stickers,
         identity_registry=TelegramIdentityRegistry(db),
     ) if mtproto else None
-    initiative = InitiativeScheduler(db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence), s, buffer, presence)
+    initiative_chat_ids = {-peer_id for peer_id in mtproto.settings.allowlist} if mtproto else None
+    initiative = InitiativeScheduler(
+        db, manager, lifecycle, scheduler, InitiativeContextBuilder(context, lifecycle, presence),
+        s, buffer, presence, allowed_chat_ids=initiative_chat_ids,
+    )
     manager.initiative_scheduler = initiative
     worker = StickerAnalysisWorker(db, bot, stickers, provider, s) if bot else None
     daily_life = DailyLifeScheduler(db, provider, presence, s)
@@ -333,8 +337,9 @@ async def main():
             tg.create_task(serve_database_health(db))
             tg.create_task(scheduler.run())
             tg.create_task(read_scheduler.run())
-            if not use_mtproto:
+            if not use_mtproto or mtproto.settings.telegram_autonomous_outbound:
                 tg.create_task(initiative.run())
+            if not use_mtproto:
                 if s.daily_life_enabled: tg.create_task(daily_life.run())
             if not use_mtproto and s.sticker_analysis_enabled and provider.supports_vision:
                 for _ in range(min(4, max(1, s.sticker_analysis_workers))): tg.create_task(worker.run())

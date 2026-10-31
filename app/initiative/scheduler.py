@@ -2,6 +2,8 @@ import asyncio
 import logging
 import random
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.actions.models import ActionType
 from app.llm.schemas import LLMRequest
@@ -10,9 +12,11 @@ log = logging.getLogger(__name__)
 
 
 class InitiativeScheduler:
-    def __init__(self, db, manager, lifecycle, response_scheduler, context, settings, buffer=None, presence=None, rng=None):
+    def __init__(self, db, manager, lifecycle, response_scheduler, context, settings, buffer=None, presence=None, rng=None,
+                 allowed_chat_ids=None):
         self.db, self.manager, self.lifecycle, self.response_scheduler, self.context = db, manager, lifecycle, response_scheduler, context
         self.settings, self.buffer, self.presence, self.rng = settings, buffer, presence, rng or random.random
+        self.allowed_chat_ids = frozenset(allowed_chat_ids) if allowed_chat_ids is not None else None
         self.tasks: dict[int, asyncio.Task] = {}
 
     def cancel_chat(self, chat_id: int):
@@ -80,6 +84,12 @@ class InitiativeScheduler:
         if cooldown["hours"] is not None and cooldown["hours"] < self.settings.initiative_cooldown_hours: return False, "cooldown", state
         daily = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history WHERE chat_id=? AND date(created_at)=date('now')", (chat_id,))
         if daily["count"] >= self.settings.initiative_max_per_day: return False, "daily_limit", state
+        if self.allowed_chat_ids is not None:
+            global_daily = await self.db.fetchone(
+                "SELECT COUNT(*) AS count FROM initiative_history WHERE date(created_at)=date('now')"
+            )
+            global_limit = getattr(self.settings, "initiative_global_max_per_day", 2)
+            if global_daily["count"] >= global_limit: return False, "global_daily_limit", state
         unanswered = await self.db.fetchone("SELECT COUNT(*) AS count FROM initiative_history h WHERE h.chat_id=? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id=h.chat_id AND m.sender='user' AND julianday(m.timestamp)>julianday(h.created_at))", (chat_id,))
         if unanswered["count"] >= self.settings.initiative_max_unanswered: return False, "max_unanswered", state
         if basis == "spontaneous" and self.rng() >= await self._spontaneous_probability(chat_id):
@@ -121,6 +131,9 @@ class InitiativeScheduler:
         text_count = 0
         actions = []
         for action in decision.actions:
+            # An autonomous initiative is addressed only to this chat.
+            if action.type == ActionType.contact_message:
+                continue
             if action.type == ActionType.text:
                 text_count += 1
                 if text_count > 6:
@@ -140,7 +153,19 @@ class InitiativeScheduler:
 
     async def run_once(self):
         await self.lifecycle.transition_due()
-        for row in await self.db.fetchall("SELECT chat_id,MAX(user_id) AS user_id FROM messages WHERE sender='user' GROUP BY chat_id"):
+        rows = await self.db.fetchall("SELECT chat_id,MAX(user_id) AS user_id FROM messages WHERE sender='user' GROUP BY chat_id")
+        if self.allowed_chat_ids is not None:
+            rows = sorted(
+                (row for row in rows if row["chat_id"] in self.allowed_chat_ids),
+                key=lambda row: row["chat_id"],
+            )
+            # Rotate the starting contact each local day so a global cap does
+            # not permanently give the first SQLite chat priority.
+            if rows:
+                local_day = datetime.now(ZoneInfo(getattr(self.settings, "timezone", "Europe/Kyiv"))).date().toordinal()
+                start = local_day % len(rows)
+                rows = rows[start:] + rows[:start]
+        for row in rows:
             await self.check_chat(row["user_id"], row["chat_id"])
 
     async def run(self):
