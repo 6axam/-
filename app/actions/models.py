@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ActionType(str, Enum):
-    text = "text"; sticker = "sticker"; reaction = "reaction"; image = "image"; voice_message = "voice_message"; edit = "edit"; delete = "delete"; pause = "pause"; silence = "silence"
+    text = "text"; contact_message = "contact_message"; sticker = "sticker"; reaction = "reaction"; image = "image"; voice_message = "voice_message"; edit = "edit"; delete = "delete"; pause = "pause"; silence = "silence"
 
 
 class Duration(str, Enum):
@@ -50,6 +50,8 @@ class Action(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: ActionType
     text: str | None = Field(default=None, max_length=4096)
+    target_user_id: int | None = Field(default=None, gt=0)
+    target_username: str | None = Field(default=None, min_length=5, max_length=33, pattern=r"^@?[A-Za-z0-9_]{5,32}$")
     sticker_id: int | None = None
     sticker_intent: StickerIntent | None = None
     emoji: str | None = Field(default=None, max_length=32)
@@ -66,6 +68,13 @@ class Action(BaseModel):
     def validate_payload(self):
         if self.type == ActionType.text and not self.text:
             raise ValueError("text action requires text")
+        if self.type == ActionType.contact_message:
+            if not self.text or not self.text.strip():
+                raise ValueError("contact_message action requires text")
+            if not self.target_user_id and not self.target_username:
+                raise ValueError("contact_message action requires a recipient")
+            if self.target_user_id and self.target_username:
+                raise ValueError("contact_message action must use one recipient identifier")
         if self.type == ActionType.pause and not self.duration:
             raise ValueError("pause action requires duration")
         if self.type == ActionType.sticker and not (self.sticker_id or self.sticker_intent):

@@ -71,6 +71,8 @@ class TelegramActionExecutor:
 
     async def execute(self, item):
         a = item.action
+        if a.type == ActionType.contact_message:
+            raise RuntimeError("contact_message is available only through the MTProto personal account")
         if a.type == ActionType.pause:
             await asyncio.sleep(self.timing.between_messages(a.text or "") if a.automatic else self.timing.pause(a.duration or Duration.short))
         elif a.type == ActionType.text and a.text:

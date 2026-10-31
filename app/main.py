@@ -109,7 +109,8 @@ async def main():
         executor = MTProtoActionExecutor(mtproto, db, stickers=stickers, lifecycle=lifecycle,
             image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather),
             image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours,
-            voice_provider=voice_provider, sticker_documents=mtproto_stickers)
+            voice_provider=voice_provider, sticker_documents=mtproto_stickers,
+            owner_telegram_id=s.owner_telegram_id)
     else:
         executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider)
     queue = ActionQueue(executor, transport="mtproto" if use_mtproto else "bot_api")

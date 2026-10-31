@@ -144,9 +144,10 @@ class ContextBuilder:
         response = response_rules()
         action_tendencies = (
             "ACTION TENDENCIES\n"
-            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}; voice_message_available={'true' if self.voice_message_available else 'false'}; voice_message_tendency={self.voice_message_tendency if self.voice_message_available else 0:.2f}. "
+            f"sticker_tendency={self.sticker_tendency:.2f}; reaction_tendency={self.reaction_tendency:.2f}; voice_message_available={'true' if self.voice_message_available else 'false'}; voice_message_tendency={self.voice_message_tendency if self.voice_message_available else 0:.2f}; "
+            f"contact_message_available={'true' if self.transport_name == 'mtproto' and user_id == self.owner_profile_user_id else 'false'}. "
             "voice_message_available=true means the backend can really generate and send a Telegram voice message. These are preferences, not quotas: use stickers/reactions/voice more readily when they are a natural emotional response, "
-            "but never add one mechanically or instead of needed text."
+            "but never add one mechanically or instead of needed text. contact_message_available=true permits an owner-requested private message only; the backend checks the recipient allowlist and recent owner-provided identity."
         )
         memory_policy = "MEMORY POLICY\n" + read_prompt("memory.md")
         emotion_policy = read_prompt("emotional_state.md")

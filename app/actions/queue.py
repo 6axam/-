@@ -125,7 +125,7 @@ class ActionQueue:
                                 transport=self.transport, generation_id=item.generation_id,
                                 action_index=item.action_index, success=False,
                             )
-                        if item.action.type == ActionType.text:
+                        if item.action.type in {ActionType.text, ActionType.contact_message}:
                             self._failed_generations.add(item.generation_id)
                     except Exception:
                         if self.db is not None and item.action_index is not None:
@@ -133,7 +133,7 @@ class ActionQueue:
                                 transport=self.transport, generation_id=item.generation_id,
                                 action_index=item.action_index, success=False,
                             )
-                        if item.action.type == ActionType.text:
+                        if item.action.type in {ActionType.text, ActionType.contact_message}:
                             # A transport exception can happen after Telegram
                             # accepted a send but before the client received
                             # its acknowledgement. Never retry this slot or

@@ -273,7 +273,9 @@ class ConversationManager:
                 log.info("bedtime_delayed_by_owner chat_id=%s delay_minutes=%s sleep_at=%s", chat_id, adjustment.delay_minutes, plan["sleep_at"])
             except Exception:
                 log.exception("bedtime_delay_persistence_failed chat_id=%s", chat_id)
-        response.actions = await self._validate_action_targets(chat_id, response.actions, target_message_id)
+        response.actions = await self._validate_action_targets(
+            chat_id, response.actions, target_message_id, requester_user_id=user_id, user_turn=text,
+        )
         if self.splitter:
             response.actions = self.splitter.split_actions(response.actions)
         continuation = response.spontaneous_continuation
@@ -404,9 +406,21 @@ class ConversationManager:
                 await self.context.db.record_bedtime(chat_id, bedtime_state["local_day"], "conversation")
         return generation
 
-    async def _validate_action_targets(self, chat_id, actions, current_message_id):
+    async def _validate_action_targets(self, chat_id, actions, current_message_id,
+                                       requester_user_id=None, user_turn=""):
         safe = []
+        # Contact messages are external side effects. They are only valid on
+        # the personal-account transport, in response to a direct owner request.
+        # The executor independently checks the exact recipient allowlist.
+        contact_send_requested = self._explicit_contact_send_request(user_turn)
+        owner_id = getattr(self.context, "owner_profile_user_id", None)
+        if getattr(self.context, "transport_name", "bot_api") != "mtproto" or requester_user_id != owner_id:
+            contact_send_requested = False
         for action in actions:
+            if action.type == ActionType.contact_message:
+                if not contact_send_requested or not await self._contact_recipient_was_identified(chat_id, action):
+                    log.warning("dropping_unauthorized_contact_message chat_id=%s requester=%s", chat_id, requester_user_id)
+                    continue
             if action.type == ActionType.reaction and not action.target_message_id:
                 action.target_message_id = current_message_id
             if action.reply_to_message_id and not await self.context.db.known_user_message(chat_id, action.reply_to_message_id):
@@ -419,6 +433,39 @@ class ConversationManager:
                 continue
             safe.append(action)
         return safe
+
+    async def _contact_recipient_was_identified(self, chat_id, action):
+        """Require a recipient alias to have been supplied by the owner recently."""
+        rows = await self.context.db.recent_messages(chat_id, limit=32)
+        owner_text = "\n".join(
+            (row["text"] or "") for row in rows if row["sender"] == "user"
+        ).casefold()
+        aliases = []
+        if action.target_username:
+            aliases.append(action.target_username.lstrip("@").casefold())
+        elif action.target_user_id:
+            row = await self.context.db.fetchone(
+                "SELECT username,display_name FROM telegram_contact_identities WHERE telegram_user_id=? "
+                "ORDER BY last_seen_at DESC LIMIT 1", (action.target_user_id,),
+            )
+            if row:
+                aliases.extend(value.casefold() for value in (row["username"], row["display_name"]) if value)
+        # Names are matched as whole tokens to avoid resolving e.g. "ann" in
+        # an unrelated word. Usernames are similarly matched literally.
+        import re
+        return any(re.search(rf"(?<![\w])@?{re.escape(alias)}(?![\w])", owner_text) for alias in aliases)
+
+    @staticmethod
+    def _explicit_contact_send_request(text):
+        import re
+        value = (text or "").casefold()
+        patterns = (
+            r"\bнапиши\s+(?:ему|ей|им|@[a-z0-9_]{5,32})\b",
+            r"\b(?:попробуй|давай|можешь|сможешь)\s+(?:(?:ему|ей|им)\s+)?написать\b",
+            r"\bотправь\s+(?:ему|ей|им|@[a-z0-9_]{5,32})\b",
+            r"\bсвяжись\s+с\s+(?:ним|ней|ними|@[a-z0-9_]{5,32})\b",
+        )
+        return any(re.search(pattern, value) for pattern in patterns)
 
     async def enqueue_initiative(self, chat_id: int, generation: str, actions):
         if self.generations.get(chat_id) != generation:

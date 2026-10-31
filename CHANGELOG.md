@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.31.0 — Owner-directed contact messages
+`unreleased` · 2026-11-01
+
+Added explicit owner-requested private messages through the MTProto action
+queue, with recipient allowlist and recent identity checks; autonomous outreach
+remains disabled.
+
 ## v1.30.4 — Natural multi-message replies
 `unreleased` · 2026-10-31
 

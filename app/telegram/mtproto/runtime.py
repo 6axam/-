@@ -180,7 +180,8 @@ class MTProtoActionExecutor:
     typing_refresh_seconds = 4.0
 
     def __init__(self, transport, db, stickers=None, lifecycle=None, image_provider=None, image_prompts=None,
-                 image_daily_limit=2, image_cooldown_hours=12, voice_provider=None, sticker_documents=None):
+                 image_daily_limit=2, image_cooldown_hours=12, voice_provider=None, sticker_documents=None,
+                 owner_telegram_id=None):
         self.transport = transport
         self.db = db
         self.stickers = stickers
@@ -191,6 +192,7 @@ class MTProtoActionExecutor:
         self.image_cooldown_hours = image_cooldown_hours
         self.voice_provider = voice_provider
         self.sticker_documents = sticker_documents
+        self.owner_telegram_id = owner_telegram_id
         self.timing = TimingEngine()
         self._image_generations = {}
 
@@ -291,6 +293,8 @@ class MTProtoActionExecutor:
             await self._typing(item.chat_id)
             await asyncio.sleep(self.timing.typing_seconds(text))
             await self._send_text(item, text)
+        elif action.type == ActionType.contact_message:
+            await self._contact_message(item)
         elif action.type == ActionType.reaction:
             await self._reaction(item)
         elif action.type == ActionType.sticker:
@@ -305,6 +309,34 @@ class MTProtoActionExecutor:
             await self._delete(item)
         else:
             raise MTProtoActionUnavailable(f"unsupported MTProto action: {action.type.value}")
+
+    async def _contact_message(self, item):
+        action = item.action
+        settings = self.transport.settings
+        if not self.owner_telegram_id or item.chat_id != logical_chat_id(self.owner_telegram_id):
+            raise MTProtoActionUnavailable("only the configured owner may request a contact message")
+        client = await self.transport.connect()
+        if action.target_user_id:
+            recipient_id = action.target_user_id
+            entity = await self.transport.resolve_peer(recipient_id)
+        else:
+            username = action.target_username.lstrip("@")
+            entity = await client.get_entity(username)
+            recipient_id = int(getattr(entity, "id", 0) or 0)
+        if not recipient_id or recipient_id == self.owner_telegram_id or recipient_id not in settings.allowlist:
+            raise MTProtoActionUnavailable("contact recipient is not in the MTProto allowlist")
+        text = (action.text or "").strip()
+        if not text:
+            raise MTProtoActionUnavailable("contact message text is empty")
+        sent = await client.send_message(entity, text)
+        target_chat_id = logical_chat_id(recipient_id)
+        await self.db.record_message(
+            chat_id=target_chat_id, telegram_message_id=sent.id, sender="assistant",
+            kind="text", text=text, generation_id=item.generation_id,
+        )
+        await self._record_outgoing_state(target_chat_id, sent.id)
+        if self.lifecycle:
+            await self.lifecycle.on_bot_message(target_chat_id)
 
     async def _edit(self, item):
         action = item.action
