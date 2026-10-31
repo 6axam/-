@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.30.2 — CPU-only inference dependencies
+`unreleased` · 2026-10-31
+
+Install the official CPU-only PyTorch build and limit math-library threads so
+the CPU deployment does not pull CUDA libraries or overuse the host CPU.
+
 ## v1.30.1 — Compose build path fix
 `unreleased` · 2026-10-31
 

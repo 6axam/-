@@ -14,6 +14,9 @@ services:
       ANYA_VOICE_REFERENCE: /app/data/assets/anya/voice_reference.wav
       HF_HOME: /app/data/model-cache
       TRANSFORMERS_CACHE: /app/data/model-cache
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "1"
     volumes:
       - ${ANYA_DATA_DIR:-../data}:/app/data
     read_only: true
