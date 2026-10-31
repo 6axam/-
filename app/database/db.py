@@ -1419,6 +1419,27 @@ class Database:
         seconds = row["seconds_since_assistant"] if row else None
         return seconds is not None and seconds <= window_seconds
 
+    async def active_private_contacts(self, *, transport: str, exclude_chat_id: int,
+                                      window_seconds: float) -> list[sqlite3.Row]:
+        """Return a minimal, recent private-contact roster for social presence.
+
+        This intentionally exposes neither message content nor relationship
+        state.  The caller decides whether a contact label may be shown to the
+        current person; this method merely resolves stable transport identity.
+        """
+        return await self.fetchall(
+            "SELECT c.local_chat_id,c.peer_id,i.username,i.display_name "
+            "FROM telegram_conversations c "
+            "JOIN conversation_lifecycle l ON l.chat_id=c.local_chat_id "
+            "LEFT JOIN telegram_contact_identities i ON "
+            "i.transport=c.transport AND i.account_id=c.account_id AND i.telegram_user_id=c.peer_id "
+            "WHERE c.transport=? AND c.peer_type='user' AND c.local_chat_id<>? "
+            "AND l.last_user_message_at IS NOT NULL "
+            "AND (julianday('now')-julianday(l.last_user_message_at))*86400<=? "
+            "ORDER BY l.last_user_message_at DESC,c.local_chat_id ASC",
+            (transport, exclude_chat_id, window_seconds),
+        )
+
     async def record_media(self, *, chat_id: int, telegram_message_id: int, file_id: str, file_unique_id: str | None, media_type: str, mime_type: str | None, local_cache_path: str | None, byte_size: int | None) -> int:
         await self.execute(
             "INSERT INTO media(chat_id,telegram_file_id,telegram_file_unique_id,media_type,mime_type,local_cache_path,byte_size) VALUES(?,?,?,?,?,?,?) "

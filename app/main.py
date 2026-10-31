@@ -157,7 +157,10 @@ async def main():
                              episodic_memory_max_items=s.episodic_memory_max_context_items,
                              shared_state=shared_state,
                              social_memory_retrieval=social_memory_retrieval,
-                             belief_retrieval=belief_retrieval)
+                             belief_retrieval=belief_retrieval,
+                             owner_profile_user_id=s.owner_telegram_id,
+                             transport_name=transport_name,
+                             active_contact_window_seconds=s.active_conversation_window_seconds)
     context.affective_engine = affective_engine
     context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)

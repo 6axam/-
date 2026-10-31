@@ -35,6 +35,8 @@ git diff --check
 
 | Date | Command | Result | Pytest duration | Shell elapsed | Notes |
 | --- | --- | --- | ---: | ---: | --- |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_context_chat_scope.py tests/test_context_budget.py tests/test_character_prompt.py tests/test_mtproto_runtime.py tests/test_mtproto_transport.py tests/test_shared_world_state.py` | 41 passed | 1.55 s | 2.50 s | Active private-contact presence, owner-only account labels, profile isolation and MTProto context regressions. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_character_prompt.py tests/test_context_budget.py tests/test_context_chat_scope.py tests/test_mtproto_runtime.py tests/test_shared_world_state.py` | 33 passed | 1.18 s | 1.90 s | Per-contact prompt identity, owner-profile isolation, chat-scoped context and MTProto/shared-state regressions. |
 | 2026-10-20 | `./.venv/bin/python -m pytest -q tests/test_character_prompt.py tests/test_context_budget.py tests/test_character_system.py tests/test_llm.py` | 39 passed | 1.68 s | 2.40 s | Character identity/immersion prompt contract, assembled system prompt budget and existing LLM/context regressions. |
 | 2026-10-19 | `./.venv/bin/python -m pytest -q` | 393 passed | 10.77 s | 12.20 s | Full offline suite after Agentic Brain Stage 1 typed registry and core offline tool contracts. |
 | 2026-10-19 | `./.venv/bin/python -m pytest -q tests/test_agent_tools.py tests/test_social_experience.py tests/test_mtproto_runtime.py tests/test_transport_scheduling.py` | 29 passed | 1.13 s | 1.80 s | Typed tool validation, authorization/capabilities, core memory/belief tools and existing social/MTProto regressions. |

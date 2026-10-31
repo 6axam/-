@@ -218,6 +218,25 @@ async def test_system_prompt_includes_identity_immersion_once(tmp_path):
     await db.close()
 
 
+async def test_owner_profile_is_never_injected_for_another_telegram_contact(tmp_path):
+    db = await make_db(tmp_path)
+    await db.ensure_user(2, "toma_test")
+    builder = ContextBuilder(db, owner_profile_user_id=1)
+
+    owner_system, owner_context, _ = await builder.build_with_breakdown(1, 10, "привет")
+    other_system, other_context, breakdown = await builder.build_with_breakdown(2, -2, "привет")
+
+    assert "# Максим" in owner_system
+    assert "# Максим" not in other_system
+    assert "Lenovo ThinkPad T14" not in other_system
+    assert "telegram_user_id=2" in other_context
+    assert "username=@toma_test" in other_context
+    assert "CURRENT CONTACT IDENTITY" not in owner_context
+    assert breakdown["components"]["user_profile"]["tokens"] == 0
+    assert breakdown["components"]["contact_identity"]["tokens"] > 0
+    await db.close()
+
+
 async def test_runtime_relationship_state_drives_expression_without_fixed_love(tmp_path):
     db = await make_db(tmp_path)
     builder = ContextBuilder(db)

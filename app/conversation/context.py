@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -23,7 +24,9 @@ class ContextBuilder:
                  emotion_engine=None, episodic_memory=None, episodic_memory_max_items: int = 6, episodic_memory_token_budget: int = 900,
                  shared_state=None, social_memory_retrieval=None,
                  social_memory_token_budget: int = 220, social_memory_max_items: int = 4,
-                 belief_retrieval=None, belief_token_budget: int = 220, belief_max_items: int = 4):
+                 belief_retrieval=None, belief_token_budget: int = 220, belief_max_items: int = 4,
+                 owner_profile_user_id: int | None = None, transport_name: str = "bot_api",
+                 active_contact_window_seconds: float = 600):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.emotion_engine = emotion_engine
@@ -46,6 +49,11 @@ class ContextBuilder:
         self.belief_retrieval = belief_retrieval
         self.belief_token_budget = belief_token_budget
         self.belief_max_items = belief_max_items
+        # The authored profile is private context for one configured person;
+        # it must never become a default identity for unrelated Telegram IDs.
+        self.owner_profile_user_id = owner_profile_user_id
+        self.transport_name = transport_name
+        self.active_contact_window_seconds = active_contact_window_seconds
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -102,6 +110,12 @@ class ContextBuilder:
             return f"{actor}: [фото: {row['photo_description']}]"
         return f"{actor}: {row['text'] or '[' + row['type'] + ']'}"
 
+    @staticmethod
+    def _safe_username(value: str | None) -> str | None:
+        """Keep account labels as inert display metadata in the LLM context."""
+        username = (value or "").strip()
+        return username if re.fullmatch(r"[A-Za-z0-9_]{5,32}", username) else None
+
     async def build(self, user_id, chat_id, user_turn, delay_event=None, current_turn_id=None):
         system, context, _ = await self.build_with_breakdown(
             user_id, chat_id, user_turn, delay_event=delay_event, current_turn_id=current_turn_id,
@@ -120,7 +134,11 @@ class ContextBuilder:
 
         character = "CORE TEMPERAMENT\n" + read_prompt("character.md")
         life_background = "LIFE BACKGROUND\n" + read_prompt("life_background.md")
-        profile = "USER PROFILE\n" + read_prompt("user_profile.md")
+        profile = (
+            "USER PROFILE\n" + read_prompt("user_profile.md")
+            if self.owner_profile_user_id is None or user_id == self.owner_profile_user_id
+            else ""
+        )
         response = response_rules()
         action_tendencies = (
             "ACTION TENDENCIES\n"
@@ -132,7 +150,10 @@ class ContextBuilder:
         emotion_policy = read_prompt("emotional_state.md")
         episodic_policy = read_prompt("episodic_memory.md")
         media_rule = "MEDIA RULE\nImages and stickers described or provided in the conversation are things you see normally. React to their actual content when relevant. Do not discuss technical mechanisms behind seeing or choosing them."
-        system = character + "\n\n" + life_background + "\n\n" + profile + "\n\n" + response + "\n\n" + action_tendencies + "\n\n" + memory_policy + "\n\n" + episodic_policy + "\n\n" + emotion_policy + "\n\n" + media_rule
+        system = "\n\n".join(part for part in (
+            character, life_background, profile, response, action_tendencies,
+            memory_policy, episodic_policy, emotion_policy, media_rule,
+        ) if part)
         if self.voice_message_available:
             system += "\n\nVOICE MESSAGE SPEECH STYLE\n" + read_prompt("voice_message.md")
         else:
@@ -241,6 +262,40 @@ class ContextBuilder:
             except Exception:
                 # This compatibility bridge must never interrupt a live reply.
                 log.exception("shared_state_context_failed chat_id=%s", chat_id)
+        if self.transport_name == "mtproto":
+            active_contacts = await self.db.active_private_contacts(
+                transport="mtproto", exclude_chat_id=chat_id,
+                window_seconds=self.active_contact_window_seconds,
+            )
+            other_count = len(active_contacts)
+            if self.owner_profile_user_id is not None and user_id == self.owner_profile_user_id:
+                labels = [f"@{username}" for row in active_contacts if (username := self._safe_username(row["username"]))]
+                labels_text = ", ".join(labels) if labels else "none with a safe username"
+                presence = (
+                    "ACTIVE OTHER PRIVATE CONTACTS\n"
+                    f"other_active_contacts={other_count}; owner_visible_account_labels={labels_text}.\n"
+                    "This is a current private-presence fact, not conversation content. You may acknowledge an active account label to the owner when directly asked, "
+                    "but never reveal messages, facts, emotions, relationship state, or compare contacts."
+                )
+            else:
+                presence = (
+                    "ACTIVE OTHER PRIVATE CONTACTS\n"
+                    f"other_active_contacts={other_count}.\n"
+                    "This is a current private-presence fact, not conversation content. If directly asked, answer truthfully but generally; "
+                    "never identify, name, quote, compare, or disclose anything about another contact."
+                )
+            blocks.append(presence); components["active_private_contacts"] = component_size(presence)
+        if self.owner_profile_user_id is not None and user_id != self.owner_profile_user_id:
+            user = await self.db.fetchone("SELECT username FROM users WHERE id=?", (user_id,))
+            username = (user["username"] or "").strip() if user else ""
+            identity = (
+                "CURRENT CONTACT IDENTITY\n"
+                f"telegram_user_id={user_id}; local_chat_id={chat_id}; "
+                f"username={'@' + username if username else 'unknown'}.\n"
+                "This is the current person only. Never substitute another person's name, profile, memories or relationship. "
+                "A username identifies an account but is not necessarily a personal name; do not guess a name when it is unknown."
+            )
+            blocks.append(identity); components["contact_identity"] = component_size(identity)
         if bedtime_state and bedtime_state.get("bedtime_window"):
             block = (
                 "BEDTIME STATE\n"

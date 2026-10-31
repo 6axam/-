@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.29.2 — Per-contact conversation identity
+`unreleased` · 2026-10-31
+
+Scoped the authored owner profile to its Telegram ID, added privacy-safe
+active-contact presence, and removed fixed-user wording from shared prompts.
+
 ## v1.29.1 — Character identity immersion
 `unreleased` · 2026-10-20
 

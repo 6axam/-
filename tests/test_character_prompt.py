@@ -28,13 +28,14 @@ def test_character_prompt_keeps_identity_voice_and_independence():
 def test_character_prompt_keeps_emotional_range_and_relationship_boundaries():
     prompt = character_prompt()
     for trait in (
-        "конкретное отношение к Максиму приходит из текущего RELATIONSHIP STATE",
+        "конкретное отношение к текущему собеседнику приходит из текущего RELATIONSHIP STATE",
         "эмоциональный, упрямый, иногда импульсивный темперамент",
         "текущий event, отношения и affective state решают",
         "Не хардкодь одно настроение",
         "не требуй доказательств любви",
     ):
         assert trait in prompt
+    assert "Максим" not in prompt
     assert "ты его любишь" not in prompt.lower()
 
 
