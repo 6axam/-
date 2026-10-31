@@ -130,6 +130,15 @@ def test_compose_keeps_build_paths_relative_to_compose_file(tmp_path, monkeypatc
     assert not list(root.glob(".anya-compose-*.env"))
 
 
+def test_runtime_image_keeps_private_runtime_files_out_of_build_context():
+    root = Path(cli.__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile").read_text()
+    ignore = (root / ".dockerignore").read_text().splitlines()
+    assert "COPY --chown=1000:1000 app ./app" in dockerfile
+    assert "COPY --chown=1000:1000 prompts ./prompts" in dockerfile
+    assert {".env", "data", "assets"} <= set(ignore)
+
+
 def test_perf_separates_llm_and_scheduled_waits_from_full_reply(tmp_path, monkeypatch, capsys):
     db_path = tmp_path / "data" / "companion.db"
     db_path.parent.mkdir()

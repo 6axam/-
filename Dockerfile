@@ -12,8 +12,8 @@ COPY requirements-runtime.txt ./requirements-runtime.txt
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
 RUN pip install --no-cache-dir -r requirements-runtime.txt
 
-COPY app ./app
-COPY prompts ./prompts
+COPY --chown=1000:1000 app ./app
+COPY --chown=1000:1000 prompts ./prompts
 
 RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin anya
 USER 1000:1000

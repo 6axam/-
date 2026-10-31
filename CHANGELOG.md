@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.30.3 — Non-root image file access
+`unreleased` · 2026-10-31
+
+Assign application and prompt files to the container UID so secure repository
+permissions remain readable in the unprivileged runtime.
+
 ## v1.30.2 — CPU-only inference dependencies
 `unreleased` · 2026-10-31
 

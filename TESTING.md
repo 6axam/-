@@ -218,6 +218,8 @@ git diff --check
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 416 passed | 14.82 s | — | Final full suite after all deployment and operator CLI changes. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_deploy_cli.py tests/test_health.py` | 13 passed | 0.22 s | — | Regression for Compose file-relative build context and temporary compose env cleanup. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 417 passed | 15.89 s | — | Full suite after the server build exposed and fixed Compose project-directory resolution. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_deploy_cli.py tests/test_health.py` | 14 passed | 0.21 s | — | Runtime image ownership and `.dockerignore` privacy regression checks. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q` | 418 passed | 14.25 s | — | Full suite after CPU-only PyTorch and UID 1000 image access fixes. |
 
 ## Maintenance rule
 
