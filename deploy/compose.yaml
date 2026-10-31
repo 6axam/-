@@ -1,0 +1,44 @@
+services:
+  anya:
+    image: anya:${ANYA_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: anya
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${ANYA_RUNTIME_ENV_FILE:-../runtime.env}
+    environment:
+      ANYA_REFERENCE_IMAGE: /app/data/assets/anya/reference.jpg
+      ANYA_VOICE_REFERENCE: /app/data/assets/anya/voice_reference.wav
+      HF_HOME: /app/data/model-cache
+      TRANSFORMERS_CACHE: /app/data/model-cache
+    volumes:
+      - ${ANYA_DATA_DIR:-../data}:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2.0
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

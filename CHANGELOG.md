@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.30.0 — Docker deployment and operator CLI
+`unreleased` · 2026-10-31
+
+Added privacy-scoped cross-contact memory sharing and workload-aware context,
+then packaged Anya in a resource-limited Compose runtime with manual `anya`
+update/deploy/rollback/status/logs/performance commands. Deploys back up SQLite
+online, validate migrations on a copy, and restore the previous image on failed
+health checks.
+
 ## v1.29.2 — Per-contact conversation identity
 `unreleased` · 2026-10-31
 

@@ -26,7 +26,7 @@ class ContextBuilder:
                  social_memory_token_budget: int = 220, social_memory_max_items: int = 4,
                  belief_retrieval=None, belief_token_budget: int = 220, belief_max_items: int = 4,
                  owner_profile_user_id: int | None = None, transport_name: str = "bot_api",
-                 active_contact_window_seconds: float = 600):
+                 active_contact_window_seconds: float = 600, contact_memory_sharing=None, workload=None):
         self.db, self.personality, self.emotional_state = db, personality, emotional_state
         self.stickers, self.recent_media_hours = stickers, recent_media_hours
         self.emotion_engine = emotion_engine
@@ -54,6 +54,8 @@ class ContextBuilder:
         self.owner_profile_user_id = owner_profile_user_id
         self.transport_name = transport_name
         self.active_contact_window_seconds = active_contact_window_seconds
+        self.contact_memory_sharing = contact_memory_sharing
+        self.workload = workload
 
     @staticmethod
     def _truncate_to_budget(text: str, budget: int) -> str:
@@ -136,7 +138,7 @@ class ContextBuilder:
         life_background = "LIFE BACKGROUND\n" + read_prompt("life_background.md")
         profile = (
             "USER PROFILE\n" + read_prompt("user_profile.md")
-            if self.owner_profile_user_id is None or user_id == self.owner_profile_user_id
+            if self.owner_profile_user_id is not None and user_id == self.owner_profile_user_id
             else ""
         )
         response = response_rules()
@@ -177,6 +179,8 @@ class ContextBuilder:
             "developed_beliefs": component_size(""),
             "current_life_state": component_size(""),
             "shared_world_state": component_size(""), "contact_state": component_size(""),
+            "shared_contact_facts": component_size(""),
+            "conversational_workload": component_size(""),
             "delay_event_context": component_size(""),
             "bedtime_state": component_size(""),
             "conversation_history": component_size(history), "current_user_turn": component_size(user_turn),
@@ -285,6 +289,42 @@ class ContextBuilder:
                     "never identify, name, quote, compare, or disclose anything about another contact."
                 )
             blocks.append(presence); components["active_private_contacts"] = component_size(presence)
+        if self.workload:
+            try:
+                workload = await self.workload.snapshot(chat_id)
+                block = (
+                    "CONVERSATIONAL WORKLOAD\n"
+                    f"pressure={workload.pressure}; active_generations={workload.active_generations}; pending_messages={workload.pending_messages}; "
+                    f"pending_reads={workload.pending_reads}; pending_responses={workload.pending_responses}; "
+                    f"in_flight_actions={workload.in_flight_actions}; unfinished_conversations={workload.unfinished_conversations}.\n"
+                    "This is your own limited attention, not a reason to invent an excuse. It may make you briefer or say you are busy, "
+                    "but never reveal another conversation's contents or make one person wait indefinitely."
+                )
+                blocks.append(block); components["conversational_workload"] = component_size(block)
+            except Exception:
+                log.exception("conversational_workload_failed chat_id=%s", chat_id)
+        if self.contact_memory_sharing:
+            try:
+                facts = await self.contact_memory_sharing.relevant_for(
+                    audience_user_id=user_id, query=user_turn, limit=3,
+                )
+                lines = []
+                for fact in facts:
+                    label = self._safe_username(fact.username)
+                    subject = f"@{label}" if label else "another person"
+                    line = f"- {subject}: {fact.content}"
+                    if estimate_tokens("\n".join([*lines, line])) <= 220:
+                        lines.append(line)
+                if lines:
+                    block = (
+                        "PERMITTED FACTS ABOUT OTHER PEOPLE\n" + "\n".join(lines)
+                        + "\nThese facts were explicitly made public or shareable to this person. "
+                        "Use them naturally when relevant; do not turn an ordinary mention into a privacy lecture. "
+                        "Do not infer or reveal anything beyond these exact facts."
+                    )
+                    blocks.append(block); components["shared_contact_facts"] = component_size(block)
+            except Exception:
+                log.exception("shared_contact_fact_retrieval_failed chat_id=%s", chat_id)
         if self.owner_profile_user_id is not None and user_id != self.owner_profile_user_id:
             user = await self.db.fetchone("SELECT username FROM users WHERE id=?", (user_id,))
             username = (user["username"] or "").strip() if user else ""

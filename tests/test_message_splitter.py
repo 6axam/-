@@ -39,7 +39,7 @@ def test_existing_multiple_llm_text_actions_stay_separate():
     assert splitter().split_actions(actions) == actions
 
 
-def test_split_text_preserves_delivery_metadata_on_every_part():
+def test_single_long_llm_action_is_not_automatically_broken_into_bubbles():
     original = Action(
         type=ActionType.text,
         text=("Эта длинная мысль должна остаться ответом на конкретное сообщение. "
@@ -50,8 +50,4 @@ def test_split_text_preserves_delivery_metadata_on_every_part():
         priority=7,
     )
 
-    parts = splitter().split_actions([original])
-
-    assert len(parts) > 1
-    assert all(part.reply_to_message_id == 42 for part in parts)
-    assert all(part.automatic is True and part.cancelable is False and part.priority == 7 for part in parts)
+    assert splitter().split_actions([original]) == [original]

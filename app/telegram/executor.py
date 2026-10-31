@@ -33,7 +33,7 @@ class TelegramActionExecutor:
         sent = await self.bot.send_message(item.chat_id, self.image_failure_fallback)
         await self.db.record_message(
             chat_id=item.chat_id, telegram_message_id=sent.message_id,
-            sender="assistant", kind="text", text=self.image_failure_fallback,
+            sender="assistant", kind="text", text=self.image_failure_fallback, generation_id=item.generation_id,
         )
         if self.lifecycle:
             await self.lifecycle.on_bot_message(item.chat_id)
@@ -80,7 +80,7 @@ class TelegramActionExecutor:
             await self.bot.send_chat_action(item.chat_id, ChatAction.TYPING); await asyncio.sleep(self.timing.typing_seconds(text))
             reply = {"reply_parameters": {"message_id": a.reply_to_message_id}} if a.reply_to_message_id else {}
             sent = await self.bot.send_message(item.chat_id, text, **reply)
-            await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="text", text=text)
+            await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="text", text=text, generation_id=item.generation_id)
             if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
         elif a.type == ActionType.sticker and self.stickers:
             sticker_id = a.sticker_id or (await self.stickers.resolve_intent(a.sticker_intent, item.chat_id) if a.sticker_intent else None)
@@ -89,7 +89,7 @@ class TelegramActionExecutor:
             file_id = await self.stickers.file_id(sticker_id)
             if file_id:
                 sent = await self.bot.send_sticker(item.chat_id, file_id)
-                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="sticker", sticker_file_id=file_id)
+                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="sticker", sticker_file_id=file_id, generation_id=item.generation_id)
                 await self.stickers.db.execute("UPDATE stickers SET times_sent=times_sent+1 WHERE id=?", (sticker_id,))
                 await self.stickers.record_usage(sticker_id, item.chat_id, "outgoing")
                 if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
@@ -107,7 +107,7 @@ class TelegramActionExecutor:
                 generated = await self._generate_image_with_progress(prompt, references, item.chat_id, kind)
                 photo = BufferedInputFile(generated.data, filename="anya.jpg")
                 sent = await self.bot.send_photo(item.chat_id, photo=photo, caption=a.image_intent.caption)
-                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="photo", text=a.image_intent.caption or "[generated image]")
+                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="photo", text=a.image_intent.caption or "[generated image]", generation_id=item.generation_id)
                 await self.db.execute("UPDATE image_generation_usage SET status='sent',cost=? WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (generated.cost,item.chat_id))
                 await self.db.execute("INSERT INTO generated_images(chat_id,telegram_message_id,kind,scene,location,activity,clothing_context,provider,model,status) VALUES(?,?,?,?,?,?,?,?,?,?)", (item.chat_id,sent.message_id,kind,a.image_intent.scene,visual['location'],visual['activity'],visual['clothing'],self.image_provider.name,getattr(self.image_provider,'model',''),'sent'))
                 if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
@@ -135,7 +135,7 @@ class TelegramActionExecutor:
                 extension = ".ogg" if generated.mime_type in {"audio/ogg", "audio/opus"} else ".mp3" if generated.mime_type == "audio/mpeg" else ".bin"
                 voice = BufferedInputFile(generated.data, filename="anya" + extension)
                 sent = await self.bot.send_voice(item.chat_id, voice=voice)
-                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="voice", text=a.voice_intent.text)
+                await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.message_id, sender="assistant", kind="voice", text=a.voice_intent.text, generation_id=item.generation_id)
                 if self.lifecycle: await self.lifecycle.on_bot_message(item.chat_id)
             except Exception as exc:
                 logging.getLogger(__name__).warning("voice_message_failed chat_id=%s error=%s", item.chat_id, exc)

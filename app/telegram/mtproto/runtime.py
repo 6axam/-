@@ -228,7 +228,7 @@ class MTProtoActionExecutor:
             await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), text,
             reply_to=item.action.reply_to_message_id,
         )
-        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="text", text=text)
+        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="text", text=text, generation_id=item.generation_id)
         await self._record_outgoing_state(item.chat_id, sent.id)
         if self.lifecycle:
             await self.lifecycle.on_bot_message(item.chat_id)
@@ -357,7 +357,7 @@ class MTProtoActionExecutor:
         client = await self.transport.connect()
         sent = await client.send_file(await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), document)
         file_id = await self.stickers.file_id(sticker_id)
-        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="sticker", sticker_file_id=file_id)
+        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="sticker", sticker_file_id=file_id, generation_id=item.generation_id)
         await self._record_outgoing_state(item.chat_id, sent.id)
         await self.stickers.db.execute("UPDATE stickers SET times_sent=times_sent+1 WHERE id=?", (sticker_id,))
         await self.stickers.record_usage(sticker_id, item.chat_id, "outgoing")
@@ -378,7 +378,7 @@ class MTProtoActionExecutor:
             generated = await self.image_provider.generate(prompt, references)
             client = await self.transport.connect()
             sent = await client.send_file(await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), self._upload(generated.data, "anya.jpg"), caption=action.image_intent.caption)
-            await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="photo", text=action.image_intent.caption or "[generated image]")
+            await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="photo", text=action.image_intent.caption or "[generated image]", generation_id=item.generation_id)
             await self._record_outgoing_state(item.chat_id, sent.id)
             await self.db.execute("UPDATE image_generation_usage SET status='sent',cost=? WHERE id=(SELECT max(id) FROM image_generation_usage WHERE chat_id=? AND status='processing')", (generated.cost, item.chat_id))
             await self.db.execute("INSERT INTO generated_images(chat_id,telegram_message_id,kind,scene,location,activity,clothing_context,provider,model,status) VALUES(?,?,?,?,?,?,?,?,?,?)", (item.chat_id, sent.id, action.image_intent.kind.value, action.image_intent.scene, visual["location"], visual["activity"], visual["clothing"], self.image_provider.name, getattr(self.image_provider, "model", ""), "sent"))
@@ -405,7 +405,7 @@ class MTProtoActionExecutor:
         extension = ".ogg" if generated.mime_type in {"audio/ogg", "audio/opus"} else ".mp3" if generated.mime_type == "audio/mpeg" else ".bin"
         client = await self.transport.connect()
         sent = await client.send_file(await self.transport.resolve_peer(peer_id_for_chat(item.chat_id)), self._upload(generated.data, "anya" + extension), voice_note=True)
-        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="voice", text=action.voice_intent.text)
+        await self.db.record_message(chat_id=item.chat_id, telegram_message_id=sent.id, sender="assistant", kind="voice", text=action.voice_intent.text, generation_id=item.generation_id)
         await self._record_outgoing_state(item.chat_id, sent.id)
         if self.lifecycle:
             await self.lifecycle.on_bot_message(item.chat_id)

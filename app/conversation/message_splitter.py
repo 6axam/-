@@ -4,7 +4,12 @@ from app.actions.models import Action, ActionType
 
 
 class MessageSplitter:
-    """Conservative conversational fallback for a single long text action."""
+    """Preserve the model's deliberate Telegram bubble boundaries.
+
+    A long coherent thought is still one message.  The LLM uses multiple text
+    actions when it actually intends an emotional beat or separate thought;
+    backend heuristics cannot reliably infer that from punctuation or length.
+    """
     transition = re.compile(r"\s+(?=(?:а|но|хотя|кстати|короче|ещё|вообще)\b)", re.IGNORECASE)
     sentence = re.compile(r"(?<=[.!?])\s+")
     urls = re.compile(r"https?://|www\.", re.IGNORECASE)
@@ -18,26 +23,7 @@ class MessageSplitter:
         self.max_parts = max_parts
 
     def split_actions(self, actions: list[Action]) -> list[Action]:
-        texts = [action for action in actions if action.type == ActionType.text]
-        if not self.enabled or len(texts) != 1:
-            return actions
-        target = texts[0]
-        parts = self.split_text(target.text or "")
-        if len(parts) == 1:
-            return actions
-        result = []
-        for action in actions:
-            if action is target:
-                result.extend(Action(
-                    type=ActionType.text, text=part,
-                    reply_to_message_id=action.reply_to_message_id,
-                    automatic=action.automatic,
-                    cancelable=action.cancelable,
-                    priority=action.priority,
-                ) for part in parts)
-            else:
-                result.append(action)
-        return result
+        return actions
 
     def split_text(self, text: str) -> list[str]:
         text = text.strip()

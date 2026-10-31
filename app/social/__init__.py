@@ -11,10 +11,11 @@ from app.social.memory import SocialMemoryRouter
 from app.social.models import SocialEvent, SourceDescriptor, SourcePermission
 from app.social.permissions import SourcePermissionPolicy
 from app.social.retrieval import SocialMemoryRetrieval
+from app.social.contact_sharing import ContactMemorySharing, SharedContactFact
 
 __all__ = (
     "BeliefProposal", "BeliefRetrieval", "BeliefRevisionEngine", "EvidenceInput",
     "OfflineFixtureAdapter", "SocialEvent", "SocialExperienceIngestor",
     "SocialMemoryRetrieval", "SocialMemoryRouter", "SocialSourceAdapter", "SourceDescriptor", "SourcePermission",
-    "SourcePermissionPolicy",
+    "SourcePermissionPolicy", "ContactMemorySharing", "SharedContactFact",
 )

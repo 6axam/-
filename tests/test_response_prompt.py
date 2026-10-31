@@ -13,7 +13,7 @@ def test_response_prompt_keeps_critical_action_behavior_contract():
     for concept in (
         "минимальный естественный ответ",
         "отдельное Telegram-сообщение",
-        "несколько коротких `text` actions",
+        "одна законченная мысль — один `text` action",
         "`silence`",
         "`sticker_intent`",
         "`target_message_id`",
@@ -37,3 +37,10 @@ def test_response_prompt_delegates_schema_details_to_native_structured_output():
 
 def test_response_prompt_stays_within_compact_token_budget():
     assert estimate_tokens(response_prompt()) <= 700
+
+
+def test_response_prompt_keeps_bursts_optional_not_a_length_heuristic():
+    prompt = response_prompt().lower()
+    assert "не дроби абзац" in prompt
+    assert "не требует" in prompt
+    assert prompt.count("text action") <= 6

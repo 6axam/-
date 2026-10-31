@@ -8,6 +8,7 @@ from app.llm.openrouter_provider import OpenRouterProvider
 from app.conversation.context import ContextBuilder
 from app.conversation.manager import ConversationManager
 from app.conversation.response_scheduler import ResponseScheduler
+from app.conversation.workload import ConversationWorkload
 from app.conversation.read_scheduler import ReadScheduler, ReadTimingEngine
 from app.conversation.response_timing import ResponseTimingEngine
 from app.conversation.message_splitter import MessageSplitter
@@ -32,6 +33,7 @@ from app.memory.manager import MemoryManager
 from app.memory.retrieval import MemoryRetrieval
 from app.social.retrieval import SocialMemoryRetrieval
 from app.social.beliefs import BeliefRetrieval
+from app.social.contact_sharing import ContactMemorySharing
 from app.self_life import SelfLifeManager
 from app.voice import DisabledVoiceProvider, OpenRouterSeedAudioProvider
 from app.emotions.engine import EmotionalEngine
@@ -111,6 +113,7 @@ async def main():
     else:
         executor = TelegramActionExecutor(bot, db, stickers=stickers, lifecycle=lifecycle, image_provider=image_provider, image_prompts=ImagePromptBuilder(db, s.timezone, s.anya_reference_image, s.image_prompt_debug, weather=weather), image_daily_limit=s.image_generation_daily_limit, image_cooldown_hours=s.image_generation_cooldown_hours, voice_provider=voice_provider)
     queue = ActionQueue(executor, transport="mtproto" if use_mtproto else "bot_api")
+    workload = ConversationWorkload(db, transport="mtproto" if use_mtproto else "bot_api", queue=queue)
     recovery = await db.reconcile_action_dispatches(transport=queue.transport)
     if recovery["unknown"] or recovery["reclaimable_claims"]:
         logging.getLogger(__name__).warning(
@@ -132,6 +135,7 @@ async def main():
     memory_retrieval = MemoryRetrieval(memory_manager)
     social_memory_retrieval = SocialMemoryRetrieval(db)
     belief_retrieval = BeliefRetrieval(db)
+    contact_memory_sharing = ContactMemorySharing(db)
     self_life = SelfLifeManager(db, probability=s.self_life_continuation_probability)
     transport_name = "mtproto" if use_mtproto else "bot_api"
     scheduler = ResponseScheduler(db, ResponseTimingEngine(
@@ -160,7 +164,9 @@ async def main():
                              belief_retrieval=belief_retrieval,
                              owner_profile_user_id=s.owner_telegram_id,
                              transport_name=transport_name,
-                             active_contact_window_seconds=s.active_conversation_window_seconds)
+                             active_contact_window_seconds=s.active_conversation_window_seconds,
+                             contact_memory_sharing=contact_memory_sharing,
+                             workload=workload)
     context.affective_engine = affective_engine
     context.relationship_manager = relationship_manager
     splitter = MessageSplitter(enabled=s.message_split_enabled, target_chars=s.message_split_target_chars, min_chars=s.message_split_min_chars, max_parts=s.message_split_max_parts)
@@ -174,6 +180,7 @@ async def main():
                                   bedtime_window_minutes=s.bedtime_window_minutes, emotion_engine=emotion_engine, episodic_memory=episodic_memory,
                                   shared_state=shared_state, event_processor=event_processor,
                                   event_source="mtproto" if use_mtproto else "telegram_bot_api")
+    workload.bind_manager(manager)
     manager.affective_engine = affective_engine
     read_scheduler = ReadScheduler(db, presence, ReadTimingEngine(s), transport=transport_name)
 
@@ -321,6 +328,8 @@ async def main():
         dp = Dispatcher(); dp.include_router(make_router(db, buffer, manager, s.owner_telegram_id, stickers=stickers, lifecycle=lifecycle, media=media, analysis_worker=worker if s.sticker_analysis_enabled and provider.supports_vision else None, current_analysis_timeout=s.sticker_current_analysis_timeout_seconds))
     try:
         async with asyncio.TaskGroup() as tg:
+            from app.health import serve_database_health
+            tg.create_task(serve_database_health(db))
             tg.create_task(scheduler.run())
             tg.create_task(read_scheduler.run())
             if not use_mtproto:

@@ -707,6 +707,20 @@ MIGRATIONS = [
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """,
+    """
+    -- Explicit contact-fact visibility. Existing private chat memories are
+    -- deliberately absent from this table and therefore fail closed.
+    CREATE TABLE IF NOT EXISTS contact_memory_shares (
+      memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id),
+      visibility TEXT NOT NULL CHECK(visibility IN ('private','public','shareable','restricted')),
+      allowed_audience_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_memory_shares_audience ON contact_memory_shares(status,owner_user_id);
+    """,
 ]
 
 
@@ -1044,10 +1058,12 @@ class Database:
         result = await self.execute("INSERT INTO telegram_updates(telegram_update_id) VALUES(?) ON CONFLICT(telegram_update_id) DO NOTHING", (telegram_update_id,))
         return result.rowcount == 1
 
-    async def record_message(self, *, chat_id: int, telegram_message_id: int, sender: str, kind: str, user_id: int | None = None, text: str | None = None, sticker_file_id: str | None = None, reply_to: int | None = None) -> int | None:
+    async def record_message(self, *, chat_id: int, telegram_message_id: int, sender: str, kind: str, user_id: int | None = None, text: str | None = None, sticker_file_id: str | None = None, reply_to: int | None = None, generation_id: str | None = None) -> int | None:
         cursor = await self.execute(
-            "INSERT INTO messages(chat_id,telegram_message_id,user_id,sender,type,text,sticker_file_id,reply_to) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(chat_id,telegram_message_id) DO NOTHING",
-            (chat_id, telegram_message_id, user_id, sender, kind, text, sticker_file_id, reply_to),
+            "INSERT INTO messages(chat_id,telegram_message_id,user_id,sender,type,text,sticker_file_id,reply_to,conversation_turn_id) "
+            "VALUES(?,?,?,?,?,?,?,?,(SELECT turn_id FROM llm_generations WHERE generation_id=? AND turn_id IS NOT NULL ORDER BY id DESC LIMIT 1)) "
+            "ON CONFLICT(chat_id,telegram_message_id) DO NOTHING",
+            (chat_id, telegram_message_id, user_id, sender, kind, text, sticker_file_id, reply_to, generation_id),
         )
         return cursor.lastrowid if cursor.rowcount else None
 
@@ -1439,6 +1455,41 @@ class Database:
             "ORDER BY l.last_user_message_at DESC,c.local_chat_id ASC",
             (transport, exclude_chat_id, window_seconds),
         )
+
+    async def contact_memory_share_candidates(self, audience_user_id: int):
+        """Return only active explicitly shared candidates for policy filtering."""
+        return await self.fetchall(
+            "SELECT m.id,m.user_id,m.chat_id,m.content,m.importance,m.confidence,m.tags,"
+            "p.visibility,p.allowed_audience_json,p.owner_user_id,u.username "
+            "FROM contact_memory_shares p JOIN memories m ON m.id=p.memory_id "
+            "LEFT JOIN users u ON u.id=p.owner_user_id "
+            "WHERE p.status='active' AND p.owner_user_id<>? "
+            "ORDER BY m.importance DESC,m.confidence DESC,m.updated_at DESC,m.id DESC LIMIT 200",
+            (audience_user_id,),
+        )
+
+    async def contact_memory_for_owner(self, memory_id: int, owner_user_id: int):
+        return await self.fetchone(
+            "SELECT id,user_id,chat_id,content FROM memories WHERE id=? AND user_id=?",
+            (memory_id, owner_user_id),
+        )
+
+    async def set_contact_memory_share(self, *, memory_id: int, owner_user_id: int,
+                                       visibility: str, allowed_audience_json: str) -> None:
+        await self.execute(
+            "INSERT INTO contact_memory_shares(memory_id,owner_user_id,visibility,allowed_audience_json) VALUES(?,?,?,?) "
+            "ON CONFLICT(memory_id) DO UPDATE SET owner_user_id=excluded.owner_user_id,visibility=excluded.visibility,"
+            "allowed_audience_json=excluded.allowed_audience_json,status='active',updated_at=CURRENT_TIMESTAMP",
+            (memory_id, owner_user_id, visibility, allowed_audience_json),
+        )
+
+    async def revoke_contact_memory_share(self, *, memory_id: int, owner_user_id: int) -> bool:
+        result = await self.execute(
+            "UPDATE contact_memory_shares SET status='revoked',updated_at=CURRENT_TIMESTAMP "
+            "WHERE memory_id=? AND owner_user_id=? AND status='active'",
+            (memory_id, owner_user_id),
+        )
+        return result.rowcount == 1
 
     async def record_media(self, *, chat_id: int, telegram_message_id: int, file_id: str, file_unique_id: str | None, media_type: str, mime_type: str | None, local_cache_path: str | None, byte_size: int | None) -> int:
         await self.execute(
