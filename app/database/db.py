@@ -1150,6 +1150,25 @@ class Database:
     async def finish_action_dispatch(
         self, *, transport: str, generation_id: str, action_index: int, success: bool,
     ) -> None:
+        if not success:
+            failed = await self.fetchone(
+                "SELECT action_type,chat_id FROM action_dispatches "
+                "WHERE transport=? AND generation_id=? AND action_index=? "
+                "AND status='claimed' AND execution_state='executing'",
+                (transport, generation_id, action_index),
+            )
+            if failed and failed["action_type"] == "text":
+                # Persistently suppress already-claimed tail actions before
+                # terminally failing this slot. If the process crashes in
+                # between, startup reconciliation marks this executing text
+                # slot unknown and blocks the same tail there as well.
+                await self.execute(
+                    "UPDATE action_dispatches SET status='failed',"
+                    "detail='cancelled after failed earlier text delivery',updated_at=CURRENT_TIMESTAMP "
+                    "WHERE transport=? AND generation_id=? AND chat_id=? AND action_index>? "
+                    "AND status='claimed' AND execution_state='not_started' AND recovery_status='none'",
+                    (transport, generation_id, failed["chat_id"], action_index),
+                )
         await self.execute(
             "UPDATE action_dispatches SET status=?,updated_at=CURRENT_TIMESTAMP "
             "WHERE transport=? AND generation_id=? AND action_index=? AND status='claimed' AND execution_state='executing'",
@@ -1168,6 +1187,17 @@ class Database:
             "UPDATE action_dispatches SET status='failed',recovery_status='unknown',"
             "detail='process stopped during external dispatch',updated_at=CURRENT_TIMESTAMP "
             "WHERE transport=? AND status='claimed' AND execution_state='executing' AND recovery_status='none'",
+            (transport,),
+        )
+        await self.execute(
+            "UPDATE action_dispatches AS tail SET status='failed',"
+            "detail='cancelled after uncertain earlier text delivery',updated_at=CURRENT_TIMESTAMP "
+            "WHERE tail.transport=? AND tail.status='claimed' AND tail.execution_state='not_started' "
+            "AND tail.recovery_status='none' AND EXISTS ("
+            "SELECT 1 FROM action_dispatches AS earlier WHERE earlier.transport=tail.transport "
+            "AND earlier.generation_id=tail.generation_id AND earlier.chat_id=tail.chat_id "
+            "AND earlier.action_type='text' AND earlier.status='failed' "
+            "AND earlier.recovery_status='unknown' AND earlier.action_index<tail.action_index)",
             (transport,),
         )
         claimed = await self.fetchone(

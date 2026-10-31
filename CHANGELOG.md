@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.30.4 — Natural multi-message replies
+`unreleased` · 2026-10-31
+
+Clarified natural structured message boundaries and stop dependent response
+actions after a failed or uncertain text delivery, including during recovery.
+
 ## v1.30.3 — Non-root image file access
 `unreleased` · 2026-10-31
 

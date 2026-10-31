@@ -220,6 +220,8 @@ git diff --check
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 417 passed | 15.89 s | — | Full suite after the server build exposed and fixed Compose project-directory resolution. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_deploy_cli.py tests/test_health.py` | 14 passed | 0.21 s | — | Runtime image ownership and `.dockerignore` privacy regression checks. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 418 passed | 14.25 s | — | Full suite after CPU-only PyTorch and UID 1000 image access fixes. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_actions.py tests/test_message_splitter.py tests/test_response_prompt.py tests/test_llm.py tests/test_transport_scheduling.py tests/test_conversation.py` | 43 passed | 1.33 s | — | Natural structured text boundaries, ordered queue cadence, failed-send tail suppression, and durable uncertain-delivery recovery. |
+| 2026-10-31 | `./.venv/bin/python -m pytest -q` | 425 passed | 15.14 s | — | Full suite after natural multi-message actions and fail-closed response-tail delivery. |
 
 ## Maintenance rule
 

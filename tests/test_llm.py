@@ -18,8 +18,13 @@ from app.llm.schemas import InitiativeDecision, LLMRequest, LLMResponse
 
 
 def test_structured_response_validation():
-    response = LLMResponse.model_validate_json('{"actions":[{"type":"text","text":"привет"},{"type":"pause","duration":"short"}]}')
-    assert [action.type for action in response.actions] == [ActionType.text, ActionType.pause]
+    response = LLMResponse.model_validate_json(
+        '{"actions":[{"type":"text","text":"Жесть"},'
+        '{"type":"text","text":"ахах"},'
+        '{"type":"text","text":"Ты сам в костюме был?"}]}'
+    )
+    assert [action.type for action in response.actions] == [ActionType.text] * 3
+    assert [action.text for action in response.actions] == ["Жесть", "ахах", "Ты сам в костюме был?"]
     with pytest.raises(ValidationError):
         LLMResponse.model_validate_json('{"actions":[{"type":"text"}]}')
 
@@ -89,6 +94,13 @@ def test_primary_structured_output_contract_is_derived_from_pydantic(monkeypatch
     assert contract["json_schema"]["schema"]["properties"] == {"fresh": {"type": "string"}}
     assert contract["json_schema"]["schema"]["required"] == ["fresh"]
     assert contract["json_schema"]["schema"]["additionalProperties"] is False
+
+
+def test_conversation_schema_describes_ordered_separate_text_messages():
+    description = LLMResponse.model_json_schema()["properties"]["actions"]["description"]
+
+    assert "Ordered response actions" in description
+    assert "one separate Telegram message" in description
 
 
 async def test_initiative_uses_request_character_and_native_schema_without_text_schema():

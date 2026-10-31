@@ -251,7 +251,14 @@ class LLMResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     affective_appraisal: AffectiveAppraisal = Field(default_factory=AffectiveAppraisal)
     current_expression: CurrentExpressionIntent = Field(default_factory=CurrentExpressionIntent)
-    actions: list[Action] = Field(default_factory=list, max_length=12)
+    actions: list[Action] = Field(
+        default_factory=list,
+        max_length=12,
+        description=(
+            "Ordered response actions. Each text action is one separate Telegram message; "
+            "use multiple text actions only at natural conversational boundaries."
+        ),
+    )
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)
     spontaneous_continuation: SpontaneousContinuation = Field(default_factory=SpontaneousContinuation)
     self_updates: list[SelfUpdateProposal] = Field(default_factory=list, max_length=3)

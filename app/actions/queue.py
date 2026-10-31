@@ -15,6 +15,10 @@ class ActionQueue:
         self._queues: dict[int, asyncio.Queue[QueuedAction]] = defaultdict(asyncio.Queue)
         self._workers: dict[int, asyncio.Task] = {}
         self._cancelled: set[str] = set()
+        # A failed text send makes the remaining actions in that response
+        # dependent on an outcome the user cannot see. Keep them suppressed
+        # even if more work for this generation is enqueued later.
+        self._failed_generations: set[str] = set()
         self._active: dict[int, tuple[str, asyncio.Task, bool]] = {}
 
     async def enqueue_many(self, chat_id: int, generation_id: str, actions):
@@ -72,6 +76,17 @@ class ActionQueue:
         while not queue.empty():
             item = await queue.get()
             try:
+                if item.generation_id in self._failed_generations:
+                    if self.db is not None and item.action_index is not None:
+                        await self.db.cancel_unstarted_action_dispatch(
+                            transport=self.transport, generation_id=item.generation_id,
+                            action_index=item.action_index,
+                        )
+                    log.warning(
+                        "action_sequence_tail_suppressed transport=%s chat_id=%s generation=%s action_index=%s",
+                        self.transport, chat_id, item.generation_id, item.action_index,
+                    )
+                    continue
                 if item.generation_id in self._cancelled and item.action.cancelable:
                     if self.db is not None and item.action_index is not None:
                         await self.db.cancel_unstarted_action_dispatch(
@@ -110,12 +125,20 @@ class ActionQueue:
                                 transport=self.transport, generation_id=item.generation_id,
                                 action_index=item.action_index, success=False,
                             )
+                        if item.action.type == ActionType.text:
+                            self._failed_generations.add(item.generation_id)
                     except Exception:
                         if self.db is not None and item.action_index is not None:
                             await self.db.finish_action_dispatch(
                                 transport=self.transport, generation_id=item.generation_id,
                                 action_index=item.action_index, success=False,
                             )
+                        if item.action.type == ActionType.text:
+                            # A transport exception can happen after Telegram
+                            # accepted a send but before the client received
+                            # its acknowledgement. Never retry this slot or
+                            # send dependent later parts automatically.
+                            self._failed_generations.add(item.generation_id)
                         log.exception(
                             "action_execution_failed chat_id=%s generation=%s action_type=%s",
                             chat_id, item.generation_id, item.action.type.value,

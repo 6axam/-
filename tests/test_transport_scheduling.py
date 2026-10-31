@@ -157,6 +157,11 @@ async def test_dispatch_recovery_reclaims_only_pre_execution_claims_and_marks_cr
         transport="mtproto", generation_id="during-send", action_index=0, chat_id=-2, action_type="text",
     )
     assert await db.start_action_dispatch(transport="mtproto", generation_id="during-send", action_index=0)
+    for action_index in (1, 2):
+        assert await db.claim_action_dispatch(
+            transport="mtproto", generation_id="during-send", action_index=action_index,
+            chat_id=-2, action_type="text",
+        )
     await db.close()
 
     restarted = Database(f"sqlite:///{path}")
@@ -167,15 +172,70 @@ async def test_dispatch_recovery_reclaims_only_pre_execution_claims_and_marks_cr
     executor = _DurableExecutor(restarted)
     queue = ActionQueue(executor, transport="mtproto")
     await queue.enqueue_many(-1, "queued", [Action(type=ActionType.text, text="safe")])
-    await queue.enqueue_many(-2, "during-send", [Action(type=ActionType.text, text="unsafe")])
+    await queue.enqueue_many(-2, "during-send", [
+        Action(type=ActionType.text, text="uncertain"),
+        Action(type=ActionType.text, text="dependent part 2"),
+        Action(type=ActionType.text, text="dependent part 3"),
+    ])
     await queue._queues[-1].join()
     await queue._queues[-2].join()
     assert executor.sent == [(-1, "queued", "safe")]
-    row = await restarted.fetchone(
-        "SELECT status,recovery_status,detail FROM action_dispatches WHERE generation_id='during-send'",
+    rows = await restarted.fetchall(
+        "SELECT action_index,status,recovery_status,detail FROM action_dispatches "
+        "WHERE generation_id='during-send' ORDER BY action_index",
     )
-    assert tuple(row) == ("failed", "unknown", "process stopped during external dispatch")
+    assert [tuple(row) for row in rows] == [
+        (0, "failed", "unknown", "process stopped during external dispatch"),
+        (1, "failed", "none", "cancelled after uncertain earlier text delivery"),
+        (2, "failed", "none", "cancelled after uncertain earlier text delivery"),
+    ]
     await restarted.close()
+
+
+async def test_failed_mtproto_text_send_cancels_durable_response_tail_without_retry(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'failed-text-tail.sqlite'}")
+    await db.connect()
+
+    class FailingExecutor(_DurableExecutor):
+        def __init__(self, db):
+            super().__init__(db)
+            self.attempted = []
+
+        async def execute(self, item):
+            self.attempted.append(item.action.text)
+            if item.action.text == "first" and self.attempted.count("first") == 1:
+                raise RuntimeError("ambiguous Telegram send failure")
+            self.sent.append((item.chat_id, item.generation_id, item.action.text))
+
+    executor = FailingExecutor(db)
+    queue = ActionQueue(executor, transport="mtproto")
+    actions = [
+        Action(type=ActionType.text, text="first"),
+        Action(type=ActionType.text, text="dependent second"),
+        Action(type=ActionType.text, text="dependent third"),
+    ]
+    await queue.enqueue_many(-8, "failed-response", actions)
+    await queue._queues[-8].join()
+
+    assert executor.attempted == ["first"]
+    assert executor.sent == []
+    rows = await db.fetchall(
+        "SELECT action_index,status,detail FROM action_dispatches "
+        "WHERE generation_id='failed-response' ORDER BY action_index",
+    )
+    assert [tuple(row) for row in rows] == [
+        (0, "failed", None),
+        (1, "failed", "cancelled after failed earlier text delivery"),
+        (2, "failed", "cancelled after failed earlier text delivery"),
+    ]
+
+    # Reconstructing the same generation cannot replay the ambiguous send or
+    # release the dependent tail.
+    await queue.enqueue_many(-8, "failed-response", actions)
+    await queue._queues[-8].join()
+    assert executor.attempted == ["first"]
+    assert executor.sent == []
+    await db.close()
 
 
 async def test_cancelled_generation_marks_unstarted_durable_action_terminal(tmp_path):

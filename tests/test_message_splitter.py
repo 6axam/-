@@ -1,3 +1,5 @@
+import pytest
+
 from app.actions.models import Action, ActionType
 from app.conversation.message_splitter import MessageSplitter
 
@@ -35,8 +37,22 @@ def test_technical_content_is_never_split():
 
 
 def test_existing_multiple_llm_text_actions_stay_separate():
-    actions = [Action(type=ActionType.text, text="первая"), Action(type=ActionType.text, text="вторая")]
+    actions = [
+        Action(type=ActionType.text, text="первая"),
+        Action(type=ActionType.text, text="ахах"),
+        Action(type=ActionType.text, text="вторая"),
+    ]
     assert splitter().split_actions(actions) == actions
+
+
+@pytest.mark.parametrize("texts", [["одна"], ["первая", "вторая"], ["реакция", "ахах", "вопрос"]])
+def test_splitter_preserves_each_structured_text_action_without_joining(texts):
+    actions = [Action(type=ActionType.text, text=text) for text in texts]
+
+    result = splitter().split_actions(actions)
+
+    assert [action.text for action in result] == texts
+    assert len(result) == len(texts)
 
 
 def test_single_long_llm_action_is_not_automatically_broken_into_bubbles():

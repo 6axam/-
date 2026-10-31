@@ -40,6 +40,48 @@ async def test_actions_execute_sequentially():
     assert executor.executed == ["first", "pause", "second"]
 
 
+async def test_consecutive_text_actions_keep_order_and_use_inter_message_delays():
+    events = []
+    delay_for = []
+    delay_values = []
+
+    class Timing:
+        def between_messages(self, next_text):
+            delay_for.append(next_text)
+            return 0.001
+
+    class Executor:
+        timing = Timing()
+
+        async def execute(self, item):
+            action = item.action
+            if action.type == ActionType.pause:
+                events.append(("pause", action.automatic, action.text))
+                delay = self.timing.between_messages(action.text)
+                delay_values.append(delay)
+                await asyncio.sleep(delay)
+            else:
+                events.append(("send", action.text))
+
+    queue = ActionQueue(Executor())
+    await queue.enqueue_many(7, "three-parts", [
+        Action(type=ActionType.text, text="Жесть, весь Житомир собрался"),
+        Action(type=ActionType.text, text="ахах"),
+        Action(type=ActionType.text, text="Ты сам в костюме был?"),
+    ])
+    await queue._queues[7].join()
+
+    assert events == [
+        ("send", "Жесть, весь Житомир собрался"),
+        ("pause", True, "ахах"),
+        ("send", "ахах"),
+        ("pause", True, "Ты сам в костюме был?"),
+        ("send", "Ты сам в костюме был?"),
+    ]
+    assert delay_for == ["ахах", "Ты сам в костюме был?"]
+    assert delay_values == [0.001, 0.001]
+
+
 async def test_interruption_cancels_pending_cancelable_actions():
     executor = FakeExecutor(pause_seconds=.2)
     queue = ActionQueue(executor)
@@ -54,7 +96,7 @@ async def test_interruption_cancels_pending_cancelable_actions():
     assert executor.executed == ["sent"]
 
 
-async def test_executor_failure_does_not_kill_worker_or_block_later_enqueues(caplog):
+async def test_failed_text_action_suppresses_same_response_tail_but_worker_recovers(caplog):
     class FailingOnceExecutor:
         def __init__(self):
             self.failed = False
@@ -68,10 +110,10 @@ async def test_executor_failure_does_not_kill_worker_or_block_later_enqueues(cap
 
     executor = FailingOnceExecutor()
     queue = ActionQueue(executor)
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("WARNING"):
         await queue.enqueue_many(1, "first-generation", [
             Action(type=ActionType.text, text="fails"),
-            Action(type=ActionType.pause, duration=Duration.short),
+            Action(type=ActionType.text, text="dependent tail"),
         ])
         await queue._queues[1].join()
         await queue.enqueue_many(1, "second-generation", [
@@ -79,6 +121,7 @@ async def test_executor_failure_does_not_kill_worker_or_block_later_enqueues(cap
         ])
         await queue._queues[1].join()
 
-    assert executor.executed == ["pause", "still works"]
+    assert executor.executed == ["still works"]
     assert queue._active == {}
     assert "action_execution_failed chat_id=1 generation=first-generation action_type=text" in caplog.text
+    assert "action_sequence_tail_suppressed" in caplog.text
