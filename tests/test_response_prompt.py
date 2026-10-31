@@ -13,7 +13,7 @@ def test_response_prompt_keeps_critical_action_behavior_contract():
     for concept in (
         "минимальный естественный ответ",
         "отдельное Telegram-сообщение",
-        "одна законченная мысль — один `text` action",
+        "Мысль может продолжаться в нескольких сообщениях",
         "`silence`",
         "`sticker_intent`",
         "`target_message_id`",
@@ -36,7 +36,7 @@ def test_response_prompt_delegates_schema_details_to_native_structured_output():
 
 
 def test_response_prompt_stays_within_compact_token_budget():
-    assert estimate_tokens(response_prompt()) <= 700
+    assert estimate_tokens(response_prompt()) <= 800
 
 
 def test_response_prompt_keeps_bursts_optional_not_a_length_heuristic():
@@ -49,7 +49,8 @@ def test_response_prompt_keeps_bursts_optional_not_a_length_heuristic():
 def test_response_prompt_allows_natural_reaction_laughter_and_thought_boundaries():
     prompt = response_prompt().lower()
 
-    assert "короткую реакцию или смех отдельно" in prompt
+    assert "отдельно короткая реакция или смех" in prompt
     assert "сообщений может быть одно или несколько" in prompt
-    assert "одна законченная мысль — один `text` action" in prompt
+    assert "мысль может продолжаться в нескольких сообщениях" in prompt
+    assert "незаконченный фрагмент" in prompt
     assert "не дроби абзац по пунктуации" in prompt

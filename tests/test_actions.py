@@ -6,6 +6,8 @@ from pydantic import ValidationError
 
 from app.actions.models import Action, ActionType, Duration
 from app.actions.queue import ActionQueue
+from app.conversation.message_splitter import MessageSplitter
+from app.llm.schemas import LLMResponse
 
 
 def test_edit_and_delete_actions_require_an_owned_message_target():
@@ -80,6 +82,26 @@ async def test_consecutive_text_actions_keep_order_and_use_inter_message_delays(
     ]
     assert delay_for == ["ахах", "Ты сам в костюме был?"]
     assert delay_values == [0.001, 0.001]
+
+
+async def test_structured_fragments_remain_separate_through_the_queue():
+    fragments = ["я тут задумалась", "потому что", "это оказалось неожиданно"]
+    response = LLMResponse.model_validate({
+        "actions": [{"type": "text", "text": text} for text in fragments],
+    })
+    splitter = MessageSplitter()
+    sent = []
+
+    class Executor:
+        async def execute(self, item):
+            if item.action.type == ActionType.text:
+                sent.append(item.action.text)
+
+    queue = ActionQueue(Executor())
+    await queue.enqueue_many(7, "fragmented-thought", splitter.split_actions(response.actions))
+    await queue._queues[7].join()
+
+    assert sent == fragments
 
 
 async def test_interruption_cancels_pending_cancelable_actions():

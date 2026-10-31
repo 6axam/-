@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.34.0 — Natural segmented chat actions
+`unreleased` · 2026-11-01
+
+Updated response and initiative guidance so structured text actions can form natural conversational segments while preserving complete thoughts and ordered delivery.
+
 ## v1.33.0 — Mood and contact-aware initiatives
 `unreleased` · 2026-11-01
 

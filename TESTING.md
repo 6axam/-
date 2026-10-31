@@ -222,6 +222,15 @@ git diff --check
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 418 passed | 14.25 s | — | Full suite after CPU-only PyTorch and UID 1000 image access fixes. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q tests/test_actions.py tests/test_message_splitter.py tests/test_response_prompt.py tests/test_llm.py tests/test_transport_scheduling.py tests/test_conversation.py` | 43 passed | 1.33 s | — | Natural structured text boundaries, ordered queue cadence, failed-send tail suppression, and durable uncertain-delivery recovery. |
 | 2026-10-31 | `./.venv/bin/python -m pytest -q` | 425 passed | 15.14 s | — | Full suite after natural multi-message actions and fail-closed response-tail delivery. |
+| 2026-11-01 | `pytest -q` on response prompt, conversation style, splitter, actions, LLM and MTProto runtime | 47 passed, 1 failed | 1.73 s | — | Initial segmentation checks; prompt assertion had a case mismatch. |
+| 2026-11-01 | Same targeted segmentation suite | 48 passed | 1.58 s | — | Repeated after fixing the assertion. |
+| 2026-11-01 | `./.venv/bin/python -m pytest -q` | 423 passed, 3 failed | 15.09 s | — | Full suite; two context budget checks and one initiative emotion check failed. |
+| 2026-11-01 | Three failing tests against archived baseline `a892bd5` | 3 failed | 0.63 s | — | Confirmed all three failures also occurred before this change. |
+| 2026-11-01 | Segmentation suite plus the three baseline failures | 49 passed, 2 failed | 1.83 s | — | Initiative context budget passed after prompt compaction; context budget and initiative emotion check still failed. |
+| 2026-11-01 | Segmentation suite plus both context budget checks | 50 passed | 1.69 s | — | Targeted checks after response and initiative prompt compaction. |
+| 2026-11-01 | `./.venv/bin/python -m pytest -q` | 424 passed, 2 failed | 15.10 s | — | Full suite; existing initiative emotion check and a voice-prompt regression failed. |
+| 2026-11-01 | Segmentation suite, voice suite and both context budget checks | 61 passed | 5.58 s | — | Confirmed restored voice-request wording and structured response boundaries. |
+| 2026-11-01 | `./.venv/bin/python -m pytest -q` | 425 passed, 1 failed | 14.82 s | — | Full suite; pre-existing `test_emotional_spontaneous_modifier_is_bounded_and_after_safety_rails` remains failing, reproduced on baseline. |
 
 ## Maintenance rule
 

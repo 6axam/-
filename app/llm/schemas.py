@@ -256,7 +256,8 @@ class LLMResponse(BaseModel):
         max_length=12,
         description=(
             "Ordered response actions. Each text action is one separate Telegram message; "
-            "use multiple text actions only at natural conversational boundaries."
+            "one thought may continue across short text actions at natural conversational boundaries; "
+            "a single action is also appropriate when it fits."
         ),
     )
     memory_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=4)

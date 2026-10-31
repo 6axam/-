@@ -101,6 +101,7 @@ def test_conversation_schema_describes_ordered_separate_text_messages():
 
     assert "Ordered response actions" in description
     assert "one separate Telegram message" in description
+    assert "one thought may continue across short text actions" in description
 
 
 async def test_initiative_uses_request_character_and_native_schema_without_text_schema():

@@ -6,9 +6,9 @@ from app.actions.models import Action, ActionType
 class MessageSplitter:
     """Preserve the model's deliberate Telegram bubble boundaries.
 
-    A long coherent thought is still one message.  The LLM uses multiple text
-    actions when it actually intends an emotional beat or separate thought;
-    backend heuristics cannot reliably infer that from punctuation or length.
+    A single text action stays one message, and a thought may span several
+    actions. Backend heuristics cannot reliably infer the intended boundaries
+    from punctuation or length.
     """
     transition = re.compile(r"\s+(?=(?:а|но|хотя|кстати|короче|ещё|вообще)\b)", re.IGNORECASE)
     sentence = re.compile(r"(?<=[.!?])\s+")
