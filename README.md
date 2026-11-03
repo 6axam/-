@@ -99,7 +99,6 @@ TELEGRAM_AUTONOMOUS_OUTBOUND=false
 Отдельный Textual-интерфейс показывает текущее сохранённое состояние Ани, не запуская второй бот:
 
 ```bash
-cd "/home/maks/Documents/ChatGPT/собеседник"
 ./.venv/bin/python -m app.tui
 ```
 

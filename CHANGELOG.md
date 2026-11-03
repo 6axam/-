@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.34.1 — Portable TUI instructions
+`unreleased` · 2026-11-03
+
+Removed the author-specific path from the terminal interface launch instructions.
+
 ## v1.34.0 — Natural segmented chat actions
 `unreleased` · 2026-11-01
 
